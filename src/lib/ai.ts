@@ -1,9 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { CSCase, OrderInfo, Store, Playbook } from '@/types';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
 interface AnalysisResult {
   issueCategory: CSCase['issueCategory'];
@@ -13,13 +11,9 @@ interface AnalysisResult {
 }
 
 export async function analyzeCustomerMessage(message: string): Promise<AnalysisResult> {
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'user',
-        content: `Analyze this customer service message and provide a JSON response with the following fields:
+  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+  const prompt = `Analyze this customer service message and provide a JSON response with the following fields:
 - issueCategory: one of "Wrong Item", "Damaged Item", "Not Received", "Tracking Question", "Cancel Request", "Return Request", "General Question", "Complaint", "Other"
 - sentiment: one of "Frustrated", "Concerned", "Neutral", "Polite"
 - urgency: one of "High", "Medium", "Low"
@@ -28,31 +22,29 @@ export async function analyzeCustomerMessage(message: string): Promise<AnalysisR
 Customer message:
 ${message}
 
-Respond with valid JSON only, no other text.`
-      }
-    ]
-  });
+Respond with valid JSON only, no other text.`;
 
-  const content = response.content[0];
-  if (content.type === 'text') {
-    try {
-      return JSON.parse(content.text);
-    } catch {
-      return {
-        issueCategory: 'Other',
-        sentiment: 'Neutral',
-        urgency: 'Medium',
-        suggestedActions: [],
-      };
-    }
+  try {
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
+
+    // Clean up the response - remove markdown code blocks if present
+    const cleanedText = text
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+
+    return JSON.parse(cleanedText);
+  } catch (error) {
+    console.error('AI analysis error:', error);
+    return {
+      issueCategory: 'Other',
+      sentiment: 'Neutral',
+      urgency: 'Medium',
+      suggestedActions: [],
+    };
   }
-
-  return {
-    issueCategory: 'Other',
-    sentiment: 'Neutral',
-    urgency: 'Medium',
-    suggestedActions: [],
-  };
 }
 
 export async function generateDraftReply(
@@ -61,6 +53,8 @@ export async function generateDraftReply(
   store: Store | null,
   playbook: Playbook | null
 ): Promise<string> {
+  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
   // Build persona instructions
   let personaInstructions = '';
   if (store?.personaName) {
@@ -107,13 +101,7 @@ ${playbook.whenToEscalate || 'If customer remains unsatisfied after offering sol
 `;
   }
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
-    messages: [
-      {
-        role: 'user',
-        content: `${personaInstructions}
+  const prompt = `${personaInstructions}
 
 Generate a customer service reply for the following case:
 
@@ -136,15 +124,14 @@ GUIDELINES:
 7. If tracking shows delivered but customer says not received, ask politely if someone else may have received it
 8. For wrong item issues, if order value < $15, offer replacement without requiring return
 
-Write the reply now (just the message, no additional commentary):`
-      }
-    ]
-  });
+Write the reply now (just the message, no additional commentary):`;
 
-  const content = response.content[0];
-  if (content.type === 'text') {
-    return content.text;
+  try {
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    return response.text();
+  } catch (error) {
+    console.error('AI generation error:', error);
+    return 'Unable to generate draft reply. Please compose manually.';
   }
-
-  return 'Unable to generate draft reply. Please compose manually.';
 }

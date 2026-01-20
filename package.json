@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/generative-ai": "^0.24.1",
     "airtable": "^0.12.2",
     "date-fns": "^4.1.0",
     "jose": "^6.1.3",
