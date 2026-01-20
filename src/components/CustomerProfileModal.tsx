@@ -329,21 +329,34 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
                           </div>
 
                           {/* Tracking Info */}
-                          {order.trackingNumber && (
+                          {(order.trackingNumber || order.marketplaceTrackingNumber) && (
                             <div className="pt-2 border-t border-gray-200">
                               <p className="text-xs text-gray-500 mb-1">Tracking</p>
-                              <div className="flex items-center space-x-2">
-                                <code className="text-sm bg-white px-2 py-1 rounded border border-gray-200">
-                                  {order.trackingNumber}
-                                </code>
-                                <a
-                                  href={`https://t.17track.net/en#nums=${order.trackingNumber}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="p-1 text-blue-600 hover:text-blue-800"
-                                >
-                                  <ExternalLink className="h-4 w-4" />
-                                </a>
+                              <div className="space-y-1.5">
+                                {order.trackingNumber && (
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-xs text-gray-400 w-14">Actual:</span>
+                                    <code className="text-sm bg-white px-2 py-1 rounded border border-gray-200">
+                                      {order.trackingNumber}
+                                    </code>
+                                    <a
+                                      href={`https://t.17track.net/en#nums=${order.trackingNumber}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="p-1 text-blue-600 hover:text-blue-800"
+                                    >
+                                      <ExternalLink className="h-4 w-4" />
+                                    </a>
+                                  </div>
+                                )}
+                                {order.marketplaceTrackingNumber && order.marketplaceTrackingNumber !== order.trackingNumber && (
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-xs text-gray-400 w-14">Walmart:</span>
+                                    <code className="text-sm bg-white px-2 py-1 rounded border border-gray-200">
+                                      {order.marketplaceTrackingNumber}
+                                    </code>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}

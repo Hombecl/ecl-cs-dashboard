@@ -349,6 +349,24 @@ export default function CaseDetail({
             )}
           </div>
 
+          {/* Tracking Numbers */}
+          {caseData.order && (caseData.order.trackingNumber || caseData.order.marketplaceTrackingNumber) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mb-3 bg-gray-50 rounded px-3 py-2">
+              {caseData.order.trackingNumber && (
+                <span className="flex items-center space-x-1.5">
+                  <span className="text-gray-400">Actual:</span>
+                  <code className="bg-white px-1.5 py-0.5 rounded border text-gray-700">{caseData.order.trackingNumber}</code>
+                </span>
+              )}
+              {caseData.order.marketplaceTrackingNumber && caseData.order.marketplaceTrackingNumber !== caseData.order.trackingNumber && (
+                <span className="flex items-center space-x-1.5">
+                  <span className="text-gray-400">Walmart:</span>
+                  <code className="bg-white px-1.5 py-0.5 rounded border text-gray-700">{caseData.order.marketplaceTrackingNumber}</code>
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Customer Message */}
           <div className="bg-gray-50 rounded p-3 mb-3">
             <div className="flex items-start justify-between">
