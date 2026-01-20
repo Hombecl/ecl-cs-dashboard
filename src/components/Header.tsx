@@ -1,11 +1,27 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageSquare, RefreshCw, MessageCirclePlus } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { MessageSquare, RefreshCw, MessageCirclePlus, LogOut } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
 
 export default function Header() {
   const [showFeedback, setShowFeedback] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+      router.refresh();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   return (
     <>
@@ -44,6 +60,16 @@ export default function Header() {
               </div>
               <span className="text-sm font-medium text-gray-700">Staff</span>
             </div>
+
+            <button
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="flex items-center space-x-2 px-3 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition disabled:opacity-50"
+              title="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>{isLoggingOut ? 'Logging out...' : 'Logout'}</span>
+            </button>
           </div>
         </div>
       </header>

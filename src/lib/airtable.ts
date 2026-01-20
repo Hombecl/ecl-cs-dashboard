@@ -1,5 +1,6 @@
 import Airtable from 'airtable';
 import { CSCase, OrderInfo, Store, CSMessage, Playbook, StaffFeedback } from '@/types';
+import { escapeAirtableValue, sanitizeStatus, isValidFeedbackStatus } from './sanitize';
 
 // Initialize Airtable
 const base = new Airtable({
@@ -17,7 +18,9 @@ const feedbackTable = base('CS Feedback');
 // ============ CS Cases ============
 
 export async function getCases(status?: string): Promise<CSCase[]> {
-  const filterFormula = status ? `{Status} = '${status}'` : '';
+  // Validate status against whitelist to prevent injection
+  const validStatus = sanitizeStatus(status);
+  const filterFormula = validStatus ? `{Status} = '${validStatus}'` : '';
 
   const records = await csCasesTable
     .select({
@@ -40,9 +43,11 @@ export async function getCaseById(id: string): Promise<CSCase | null> {
 
 export async function getCasesByCustomerEmail(email: string, excludeCaseId?: string): Promise<CSCase[]> {
   try {
+    // Escape email to prevent formula injection
+    const escapedEmail = escapeAirtableValue(email);
     const records = await csCasesTable
       .select({
-        filterByFormula: `{Customer Email} = '${email}'`,
+        filterByFormula: `{Customer Email} = '${escapedEmail}'`,
         sort: [{ field: 'Platform Order Number', direction: 'desc' }],
       })
       .all();
@@ -143,9 +148,11 @@ function mapRecordToCase(record: Airtable.Record<Airtable.FieldSet>): CSCase {
 
 export async function getOrderByPlatformNumber(platformOrderNumber: string): Promise<OrderInfo | null> {
   try {
+    // Escape order number to prevent formula injection
+    const escapedOrderNum = escapeAirtableValue(platformOrderNumber);
     const records = await ordersTable
       .select({
-        filterByFormula: `OR({Platform Order Number (from 4Seller)} = '${platformOrderNumber}', {Order ID_} = '${platformOrderNumber}')`,
+        filterByFormula: `OR({Platform Order Number (from 4Seller)} = '${escapedOrderNum}', {Order ID_} = '${escapedOrderNum}')`,
         maxRecords: 1,
       })
       .all();
@@ -161,9 +168,11 @@ export async function getOrderByPlatformNumber(platformOrderNumber: string): Pro
 
 export async function getOrdersByCustomerEmail(email: string): Promise<OrderInfo[]> {
   try {
+    // Escape email to prevent formula injection
+    const escapedEmail = escapeAirtableValue(email);
     const records = await ordersTable
       .select({
-        filterByFormula: `{Recipient Email_f} = '${email}'`,
+        filterByFormula: `{Recipient Email_f} = '${escapedEmail}'`,
         sort: [{ field: 'Order Date', direction: 'desc' }],
       })
       .all();
@@ -221,9 +230,11 @@ function mapRecordToOrder(record: Airtable.Record<Airtable.FieldSet>): OrderInfo
 
 export async function getStoreByCode(storeCode: string): Promise<Store | null> {
   try {
+    // Escape store code to prevent formula injection
+    const escapedStoreCode = escapeAirtableValue(storeCode);
     const records = await storeTable
       .select({
-        filterByFormula: `{Store Code} = '${storeCode}'`,
+        filterByFormula: `{Store Code} = '${escapedStoreCode}'`,
         maxRecords: 1,
       })
       .all();
@@ -262,9 +273,11 @@ function mapRecordToStore(record: Airtable.Record<Airtable.FieldSet>): Store {
 // ============ Messages ============
 
 export async function getMessagesByCaseId(caseId: string): Promise<CSMessage[]> {
+  // Escape case ID to prevent formula injection
+  const escapedCaseId = escapeAirtableValue(caseId);
   const records = await csMessagesTable
     .select({
-      filterByFormula: `{Case ID} = '${caseId}'`,
+      filterByFormula: `{Case ID} = '${escapedCaseId}'`,
       sort: [{ field: 'Case ID', direction: 'asc' }],
     })
     .all();
@@ -315,9 +328,11 @@ function mapRecordToMessage(record: Airtable.Record<Airtable.FieldSet>): CSMessa
 
 export async function getPlaybookByCategory(category: string): Promise<Playbook | null> {
   try {
+    // Escape category to prevent formula injection
+    const escapedCategory = escapeAirtableValue(category);
     const records = await playbookTable
       .select({
-        filterByFormula: `AND({Issue Category} = '${category}', {Playbook Status} = 'Active')`,
+        filterByFormula: `AND({Issue Category} = '${escapedCategory}', {Playbook Status} = 'Active')`,
         maxRecords: 1,
       })
       .all();
@@ -376,7 +391,9 @@ export async function createFeedback(feedbackData: Partial<StaffFeedback>): Prom
 }
 
 export async function getFeedback(status?: string): Promise<StaffFeedback[]> {
-  const filterFormula = status ? `{Status} = '${status}'` : '';
+  // Validate feedback status against whitelist to prevent injection
+  const validStatus = status && isValidFeedbackStatus(status) ? status : null;
+  const filterFormula = validStatus ? `{Status} = '${validStatus}'` : '';
 
   const records = await feedbackTable
     .select({
