@@ -171,6 +171,16 @@ function OrderTab({ order }: { order: CSCase['order'] }) {
       <div className="pt-3 border-t border-gray-100 space-y-2">
         <p className="text-xs text-gray-500 font-medium">Quick Links</p>
         <div className="flex flex-wrap gap-2">
+          {order.platformOrderNumber && (
+            <a
+              href={`https://seller.walmart.com/order-management?query=${encodeURIComponent(order.platformOrderNumber)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded transition"
+            >
+              Seller Center
+            </a>
+          )}
           {order.walmartProductId && (
             <a
               href={`https://www.walmart.com/ip/${order.walmartProductId}`}
@@ -178,7 +188,7 @@ function OrderTab({ order }: { order: CSCase['order'] }) {
               rel="noopener noreferrer"
               className="text-xs px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded transition"
             >
-              Walmart
+              Product Page
             </a>
           )}
           {order.supplierLink && (

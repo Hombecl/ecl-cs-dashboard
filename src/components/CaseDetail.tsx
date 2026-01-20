@@ -7,7 +7,8 @@ import {
   User, Truck, Sparkles,
   Copy, RefreshCw, Check, AlertTriangle, Clock,
   Flag, DollarSign, Eye, EyeOff, Lightbulb, ListChecks,
-  ChevronDown, ChevronRight, ChevronLeft, Send, Calendar
+  ChevronDown, ChevronRight, ChevronLeft, Send, Calendar,
+  ExternalLink
 } from 'lucide-react';
 import FollowUpChecklist from './FollowUpChecklist';
 import CustomerProfileModal from './CustomerProfileModal';
@@ -259,6 +260,15 @@ export default function CaseDetail({
               >
                 {copiedOrderNum ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
               </button>
+              <a
+                href={`https://seller.walmart.com/order-management?query=${encodeURIComponent(caseData.platformOrderNumber || '')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition"
+                title="Open in Walmart Seller Center"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
               {caseData.storeCode && (
                 <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded font-medium">
                   {caseData.storeCode}

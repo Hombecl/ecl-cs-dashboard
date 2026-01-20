@@ -1,12 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { OrderInfo } from '@/types';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
   Truck, Package, MapPin, Clock, CheckCircle,
-  AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Copy
+  AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Copy,
+  RefreshCw, Loader2
 } from 'lucide-react';
+
+interface LiveTrackingInfo {
+  trackingNumber: string;
+  carrier: string;
+  status: string;
+  statusCode: number;
+  estimatedDelivery?: string;
+  lastUpdate?: string;
+  origin?: string;
+  destination?: string;
+  daysInTransit?: number;
+  events: Array<{
+    timestamp: string;
+    description: string;
+    location?: string;
+  }>;
+}
 
 interface TrackingPanelProps {
   order: OrderInfo;
@@ -16,6 +34,32 @@ export default function TrackingPanel({ order }: TrackingPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [copiedActual, setCopiedActual] = useState(false);
   const [copiedMarketplace, setCopiedMarketplace] = useState(false);
+  const [liveTracking, setLiveTracking] = useState<LiveTrackingInfo | null>(null);
+  const [loadingLive, setLoadingLive] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
+  const fetchLiveTracking = useCallback(async () => {
+    if (!order.trackingNumber) return;
+
+    setLoadingLive(true);
+    setLiveError(null);
+
+    try {
+      const response = await fetch(`/api/tracking/${encodeURIComponent(order.trackingNumber)}`);
+      const data = await response.json();
+
+      if (data.success) {
+        setLiveTracking(data.data);
+        setExpanded(true); // Auto-expand to show results
+      } else {
+        setLiveError(data.error || 'Failed to fetch tracking info');
+      }
+    } catch (error) {
+      setLiveError('Network error. Please try again.');
+    } finally {
+      setLoadingLive(false);
+    }
+  }, [order.trackingNumber]);
 
   const copyActualTracking = () => {
     if (order.trackingNumber) {
@@ -175,24 +219,122 @@ export default function TrackingPanel({ order }: TrackingPanelProps) {
         </div>
       </div>
 
+      {/* Live Tracking Button */}
+      {hasActualTracking && (
+        <div className="mb-4">
+          <button
+            onClick={fetchLiveTracking}
+            disabled={loadingLive}
+            className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {loadingLive ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Fetching Live Status...</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-4 w-4" />
+                <span>Fetch Live Status from 17Track</span>
+              </>
+            )}
+          </button>
+          {liveError && (
+            <p className="mt-2 text-xs text-red-600 text-center">{liveError}</p>
+          )}
+        </div>
+      )}
+
+      {/* Live Tracking Results */}
+      {liveTracking && (
+        <div className="mb-4 p-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium text-green-800 flex items-center space-x-1">
+              <CheckCircle className="h-4 w-4" />
+              <span>Live 17Track Status</span>
+            </h4>
+            <span className="text-xs text-green-600">
+              {liveTracking.lastUpdate
+                ? `Updated ${formatDistanceToNow(new Date(liveTracking.lastUpdate), { addSuffix: true })}`
+                : 'Just fetched'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs text-gray-500">Status</p>
+              <p className={`font-medium ${
+                liveTracking.status.toLowerCase().includes('delivered') ? 'text-green-700' :
+                liveTracking.status.toLowerCase().includes('transit') ? 'text-blue-700' :
+                'text-gray-900'
+              }`}>
+                {liveTracking.status}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Carrier</p>
+              <p className="font-medium text-gray-900">{liveTracking.carrier}</p>
+            </div>
+            {liveTracking.daysInTransit !== undefined && (
+              <div>
+                <p className="text-xs text-gray-500">Days in Transit</p>
+                <p className="font-medium text-gray-900">{liveTracking.daysInTransit} days</p>
+              </div>
+            )}
+            {liveTracking.estimatedDelivery && (
+              <div>
+                <p className="text-xs text-gray-500">Est. Delivery</p>
+                <p className="font-medium text-gray-900">{liveTracking.estimatedDelivery}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Latest Events */}
+          {liveTracking.events.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-green-200">
+              <p className="text-xs text-gray-500 mb-2">Latest Events</p>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {liveTracking.events.slice(0, 5).map((event, idx) => (
+                  <div key={idx} className="flex items-start space-x-2">
+                    <div className={`flex-shrink-0 w-1.5 h-1.5 mt-1.5 rounded-full ${idx === 0 ? 'bg-green-500' : 'bg-gray-300'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-900 leading-tight">{event.description}</p>
+                      <p className="text-xs text-gray-500">
+                        {event.location && `${event.location} • `}
+                        {event.timestamp && format(new Date(event.timestamp), 'MMM d, h:mm a')}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {liveTracking.events.length > 5 && (
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  +{liveTracking.events.length - 5} more events
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Status Summary */}
       <div className="flex items-center space-x-3 mb-4">
-        {getStatusIcon(order.trackingStatus)}
+        {getStatusIcon(liveTracking?.status || order.trackingStatus)}
         <div className="flex-1">
           <div className="flex items-center space-x-2">
-            <span className={`text-sm font-medium px-2 py-0.5 rounded ${getStatusColor(order.trackingStatus)}`}>
-              {order.trackingStatus || 'Unknown'}
+            <span className={`text-sm font-medium px-2 py-0.5 rounded ${getStatusColor(liveTracking?.status || order.trackingStatus)}`}>
+              {liveTracking?.status || order.trackingStatus || 'Unknown'}
             </span>
-            {isTrackingStale() && (
+            {!liveTracking && isTrackingStale() && (
               <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded flex items-center space-x-1">
                 <AlertTriangle className="h-3 w-3" />
                 <span>No update for 3+ days</span>
               </span>
             )}
           </div>
-          {order.trackingLastUpdate && (
+          {(liveTracking?.lastUpdate || order.trackingLastUpdate) && (
             <p className="text-xs text-gray-500 mt-1">
-              Last update: {formatDistanceToNow(new Date(order.trackingLastUpdate), { addSuffix: true })}
+              Last update: {formatDistanceToNow(new Date(liveTracking?.lastUpdate || order.trackingLastUpdate!), { addSuffix: true })}
             </p>
           )}
         </div>
