@@ -308,9 +308,9 @@ export default function CaseDetail({
               <User className="h-3 w-3" />
               <span>{caseData.customerName || 'Unknown'}</span>
             </span>
-            <span className="flex items-center space-x-1" title={receivedTimeFormatted}>
+            <span className="flex items-center space-x-1">
               <Calendar className="h-3 w-3" />
-              <span>Received {receivedTimeAgo}</span>
+              <span title={receivedTimeAgo}>{receivedTimeFormatted}</span>
             </span>
             {caseData.order && (
               <>

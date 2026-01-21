@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import TrackingPanel from './TrackingPanel';
 import CustomerHistory from './CustomerHistory';
+import AISummaryPanel from './AISummaryPanel';
 
 interface InfoPanelProps {
   caseData: CSCase;
@@ -83,6 +84,11 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
         >
           <ChevronRight className="h-4 w-4" />
         </button>
+      </div>
+
+      {/* AI Summary - Always visible at top */}
+      <div className="p-3 border-b border-gray-200">
+        <AISummaryPanel caseId={caseData.id} />
       </div>
 
       {/* Tabs */}

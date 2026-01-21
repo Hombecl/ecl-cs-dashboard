@@ -150,9 +150,15 @@ export async function getOrderByPlatformNumber(platformOrderNumber: string): Pro
   try {
     // Escape order number to prevent formula injection
     const escapedOrderNum = escapeAirtableValue(platformOrderNumber);
+    // Note: {Platform Order Number (from 4Seller)} is a linked field (array), so use SEARCH()
+    // Also search in {Order Number (from 4Seller)} which is a rollup text field
     const records = await ordersTable
       .select({
-        filterByFormula: `OR({Platform Order Number (from 4Seller)} = '${escapedOrderNum}', {Order ID_} = '${escapedOrderNum}')`,
+        filterByFormula: `OR(
+          SEARCH('${escapedOrderNum}', ARRAYJOIN({Platform Order Number (from 4Seller)}, ',')),
+          SEARCH('${escapedOrderNum}', ARRAYJOIN({Order Number (from 4Seller)}, ',')),
+          {Order ID_} = '${escapedOrderNum}'
+        )`,
         maxRecords: 1,
       })
       .all();
