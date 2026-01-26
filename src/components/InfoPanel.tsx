@@ -5,7 +5,8 @@ import { CSCase, OrderInfo } from '@/types';
 import {
   Package, Truck, Factory, History, User,
   ChevronRight, ChevronLeft, GripVertical,
-  Search, AlertCircle, ExternalLink, Loader2
+  Search, AlertCircle, ExternalLink, Loader2,
+  Link, MapPin, CheckCircle
 } from 'lucide-react';
 import TrackingPanel from './TrackingPanel';
 import CustomerHistory from './CustomerHistory';
@@ -15,6 +16,7 @@ interface InfoPanelProps {
   caseData: CSCase;
   isOpen: boolean;
   onToggle: () => void;
+  onCaseUpdate?: (id: string, updates: Partial<CSCase>) => void;
 }
 
 type TabType = 'order' | 'tracking' | 'processing' | 'history' | 'customer';
@@ -31,7 +33,7 @@ const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 320;
 
-export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps) {
+export default function InfoPanel({ caseData, isOpen, onToggle, onCaseUpdate }: InfoPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>('order');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -145,10 +147,29 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
 
       {/* Scrollable Content Area */}
       <div className="flex-1 overflow-y-auto">
-        {/* AI Summary */}
-        <div className="p-3 border-b border-gray-200">
-          <AISummaryPanel caseId={caseData.id} />
-        </div>
+        {/* AI Summary - only show when order is linked */}
+        {caseData.order && (
+          <div className="p-3 border-b border-gray-200">
+            <AISummaryPanel caseId={caseData.id} />
+          </div>
+        )}
+
+        {/* Warning when no order linked */}
+        {!caseData.order && caseData.customerName && (
+          <div className="p-3 border-b border-gray-200">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start space-x-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-amber-800">
+                  <p className="font-medium">Link an order first</p>
+                  <p className="text-xs mt-1">
+                    AI Summary will be available after you link an order to this case.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex border-b border-gray-200 sticky top-0 bg-white z-10">
@@ -170,7 +191,7 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
 
         {/* Tab Content */}
         <div className="p-4">
-          {activeTab === 'order' && <OrderTab order={caseData.order} customerName={caseData.customerName ?? undefined} storeCode={caseData.storeCode ?? undefined} />}
+          {activeTab === 'order' && <OrderTab order={caseData.order} customerName={caseData.customerName ?? undefined} storeCode={caseData.storeCode ?? undefined} caseId={caseData.id} onOrderLinked={onCaseUpdate} />}
           {activeTab === 'tracking' && caseData.order && <TrackingPanel order={caseData.order} />}
           {activeTab === 'processing' && <ProcessingTab order={caseData.order} cancelStatus={cancelStatus} />}
           {activeTab === 'history' && caseData.customerEmail && (
@@ -187,11 +208,20 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
 }
 
 // Potential Orders Search Component
-function PotentialOrdersSearch({ customerName, storeCode }: { customerName: string; storeCode?: string }) {
+interface PotentialOrdersSearchProps {
+  customerName: string;
+  storeCode?: string;
+  caseId: string;
+  onOrderLinked?: (id: string, updates: Partial<CSCase>) => void;
+}
+
+function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked }: PotentialOrdersSearchProps) {
   const [orders, setOrders] = useState<OrderInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linkSuccess, setLinkSuccess] = useState<string | null>(null);
 
   // Parse customer name into first and last name
   const parseCustomerName = (name: string): { firstName: string; lastName: string } | null => {
@@ -245,6 +275,41 @@ function PotentialOrdersSearch({ customerName, storeCode }: { customerName: stri
     }
   };
 
+  const linkOrder = async (order: OrderInfo) => {
+    const orderNumber = order.platformOrderNumber || order.orderId;
+    if (!orderNumber) {
+      setError('Order has no valid order number');
+      return;
+    }
+
+    setLinking(order.airtableRecordId);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/cases/${caseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platformOrderNumber: orderNumber }),
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        setLinkSuccess(order.airtableRecordId);
+        // Notify parent to refresh case data
+        if (onOrderLinked) {
+          onOrderLinked(caseId, { platformOrderNumber: orderNumber });
+        }
+      } else {
+        setError(data.error || 'Failed to link order');
+      }
+    } catch (err) {
+      console.error('Error linking order:', err);
+      setError('Failed to link order');
+    } finally {
+      setLinking(null);
+    }
+  };
+
   const parsed = parseCustomerName(customerName);
 
   return (
@@ -294,7 +359,7 @@ function PotentialOrdersSearch({ customerName, storeCode }: { customerName: stri
       )}
 
       {searched && !loading && !error && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <p className="text-xs text-gray-500 font-medium">
             {orders.length > 0
               ? `Found ${orders.length} potential order${orders.length > 1 ? 's' : ''}:`
@@ -305,8 +370,13 @@ function PotentialOrdersSearch({ customerName, storeCode }: { customerName: stri
           {orders.map((order) => (
             <div
               key={order.airtableRecordId}
-              className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2"
+              className={`p-3 border rounded-lg space-y-2 ${
+                linkSuccess === order.airtableRecordId
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
+              }`}
             >
+              {/* Order Header */}
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs text-gray-500">Order #</p>
@@ -319,45 +389,103 @@ function PotentialOrdersSearch({ customerName, storeCode }: { customerName: stri
                 </span>
               </div>
 
+              {/* Customer Info */}
+              <div className="p-2 bg-white rounded border border-gray-100">
+                <div className="flex items-center space-x-1 mb-1">
+                  <User className="h-3 w-3 text-gray-400" />
+                  <span className="text-xs font-medium text-gray-700">Customer</span>
+                </div>
+                <p className="text-sm text-gray-900">{order.recipientName}</p>
+              </div>
+
+              {/* Shipping Address */}
+              {order.recipientAddress && (
+                <div className="p-2 bg-white rounded border border-gray-100">
+                  <div className="flex items-center space-x-1 mb-1">
+                    <MapPin className="h-3 w-3 text-gray-400" />
+                    <span className="text-xs font-medium text-gray-700">Shipping Address</span>
+                  </div>
+                  <p className="text-xs text-gray-600 leading-relaxed">{order.recipientAddress}</p>
+                </div>
+              )}
+
+              {/* Item Info */}
               <div>
                 <p className="text-xs text-gray-500">Item</p>
-                <p className="text-sm text-gray-900 line-clamp-2">{order.itemName}</p>
+                <p className="text-sm text-gray-900">{order.itemName}</p>
+                <p className="text-xs text-gray-500 font-mono mt-0.5">SKU: {order.sku}</p>
               </div>
 
-              <div className="flex items-center justify-between text-xs">
+              {/* Order Details */}
+              <div className="grid grid-cols-3 gap-2 text-xs">
                 <div>
-                  <span className="text-gray-500">Date: </span>
-                  <span className="text-gray-700">{order.orderDate}</span>
+                  <span className="text-gray-500">Date</span>
+                  <p className="font-medium text-gray-700">{order.orderDate}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Amount: </span>
-                  <span className="font-medium text-gray-900">${order.salesAmount.toFixed(2)}</span>
+                  <span className="text-gray-500">Qty</span>
+                  <p className="font-medium text-gray-700">{order.quantity}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500">Amount</span>
+                  <p className="font-medium text-gray-900">${order.salesAmount.toFixed(2)}</p>
                 </div>
               </div>
 
+              {/* Tracking */}
               {order.trackingNumber && (
                 <div className="text-xs">
                   <span className="text-gray-500">Tracking: </span>
                   <span className="font-mono text-gray-700">{order.trackingNumber}</span>
+                  {order.trackingStatus && (
+                    <span className="ml-2 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                      {order.trackingStatus}
+                    </span>
+                  )}
                 </div>
               )}
 
-              <div className="flex space-x-2 pt-1">
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+                {linkSuccess === order.airtableRecordId ? (
+                  <div className="flex items-center space-x-1 text-xs text-green-600 font-medium">
+                    <CheckCircle className="h-4 w-4" />
+                    <span>Order Linked Successfully!</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => linkOrder(order)}
+                    disabled={linking === order.airtableRecordId}
+                    className="flex items-center space-x-1 text-xs px-3 py-1.5 bg-green-600 text-white hover:bg-green-700 disabled:bg-green-400 rounded-lg transition font-medium"
+                  >
+                    {linking === order.airtableRecordId ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span>Linking...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Link className="h-3 w-3" />
+                        <span>Link This Order</span>
+                      </>
+                    )}
+                  </button>
+                )}
                 <a
                   href={`https://airtable.com/appRCQASsApV4C33N/tbl0v0DK9s0Ke6ty1/${order.airtableRecordId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center space-x-1 text-xs px-2 py-1 bg-green-50 text-green-600 hover:bg-green-100 rounded transition"
+                  className="flex items-center space-x-1 text-xs px-2 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded transition"
                 >
                   <ExternalLink className="h-3 w-3" />
-                  <span>View in Airtable</span>
+                  <span>Airtable</span>
                 </a>
                 {order.platformOrderNumber && (
                   <a
                     href={`https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=${encodeURIComponent(order.platformOrderNumber)}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center space-x-1 text-xs px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded transition"
+                    className="flex items-center space-x-1 text-xs px-2 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded transition"
                   >
                     <ExternalLink className="h-3 w-3" />
                     <span>Seller Center</span>
@@ -373,11 +501,19 @@ function PotentialOrdersSearch({ customerName, storeCode }: { customerName: stri
 }
 
 // Order Details Tab
-function OrderTab({ order, customerName, storeCode }: { order: CSCase['order']; customerName?: string; storeCode?: string }) {
+interface OrderTabProps {
+  order: CSCase['order'];
+  customerName?: string;
+  storeCode?: string;
+  caseId: string;
+  onOrderLinked?: (id: string, updates: Partial<CSCase>) => void;
+}
+
+function OrderTab({ order, customerName, storeCode, caseId, onOrderLinked }: OrderTabProps) {
   if (!order) {
     // Show potential orders search when no order is linked
     if (customerName) {
-      return <PotentialOrdersSearch customerName={customerName} storeCode={storeCode} />;
+      return <PotentialOrdersSearch customerName={customerName} storeCode={storeCode} caseId={caseId} onOrderLinked={onOrderLinked} />;
     }
     return <p className="text-sm text-gray-500">No order information available</p>;
   }

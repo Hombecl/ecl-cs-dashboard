@@ -351,6 +351,7 @@ export default function Dashboard() {
             caseData={selectedCase}
             isOpen={rightPanelOpen}
             onToggle={() => setRightPanelOpen(!rightPanelOpen)}
+            onCaseUpdate={handleCaseUpdate}
           />
         )}
       </div>
