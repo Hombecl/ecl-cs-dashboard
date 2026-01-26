@@ -153,6 +153,16 @@ function mapRecordToCase(record: Airtable.Record<Airtable.FieldSet>): CSCase {
 
 export async function getOrderByPlatformNumber(platformOrderNumber: string): Promise<OrderInfo | null> {
   try {
+    // Check if it's an Airtable record ID (starts with 'rec')
+    if (platformOrderNumber.startsWith('rec')) {
+      try {
+        const record = await ordersTable.find(platformOrderNumber);
+        return mapRecordToOrder(record);
+      } catch {
+        // Record not found, continue to search by other fields
+      }
+    }
+
     // Escape order number to prevent formula injection
     const escapedOrderNum = escapeAirtableValue(platformOrderNumber);
     // Note: {Platform Order Number (from 4Seller)} is a linked field (array), so use SEARCH()

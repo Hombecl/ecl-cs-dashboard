@@ -223,6 +223,7 @@ function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked 
   const [searched, setSearched] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
   const [linkSuccess, setLinkSuccess] = useState<string | null>(null);
+  const [linkWarning, setLinkWarning] = useState<string | null>(null);
 
   // Parse customer name into first and last name
   const parseCustomerName = (name: string): { firstName: string; lastName: string } | null => {
@@ -277,25 +278,31 @@ function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked 
   };
 
   const linkOrder = async (order: OrderInfo) => {
-    const orderNumber = order.platformOrderNumber || order.orderId;
-    if (!orderNumber) {
-      setError('Order has no valid order number');
+    // Prefer platformOrderNumber, fallback to airtableRecordId (most reliable)
+    const orderIdentifier = order.platformOrderNumber || order.airtableRecordId;
+    if (!orderIdentifier) {
+      setError('Order has no valid identifier');
       return;
     }
 
     setLinking(order.airtableRecordId);
     setError(null);
+    setLinkWarning(null);
 
     try {
       const response = await fetch(`/api/cases/${caseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platformOrderNumber: orderNumber }),
+        body: JSON.stringify({ platformOrderNumber: orderIdentifier }),
       });
       const data = await response.json();
 
       if (data.success) {
         setLinkSuccess(order.airtableRecordId);
+        // Check if order was enriched properly
+        if (data.data && !data.data.order) {
+          setLinkWarning('Order linked but could not load order details. Try refreshing the page.');
+        }
         // Notify parent with the updated case data (includes enriched order)
         if (onOrderLinked && data.data) {
           onOrderLinked(data.data);
@@ -449,9 +456,17 @@ function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked 
               {/* Action Buttons */}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
                 {linkSuccess === order.airtableRecordId ? (
-                  <div className="flex items-center space-x-1 text-xs text-green-600 font-medium">
-                    <CheckCircle className="h-4 w-4" />
-                    <span>Order Linked Successfully!</span>
+                  <div className="flex flex-col space-y-1">
+                    <div className="flex items-center space-x-1 text-xs text-green-600 font-medium">
+                      <CheckCircle className="h-4 w-4" />
+                      <span>Order Linked Successfully!</span>
+                    </div>
+                    {linkWarning && (
+                      <div className="flex items-center space-x-1 text-xs text-amber-600">
+                        <AlertCircle className="h-3 w-3" />
+                        <span>{linkWarning}</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <button
