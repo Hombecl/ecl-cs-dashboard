@@ -352,6 +352,10 @@ export default function Dashboard() {
             isOpen={rightPanelOpen}
             onToggle={() => setRightPanelOpen(!rightPanelOpen)}
             onCaseUpdate={handleCaseUpdate}
+            onCaseRefresh={(updatedCase) => {
+              setSelectedCase(updatedCase);
+              fetchCases(); // Refresh list to update any status changes
+            }}
           />
         )}
       </div>

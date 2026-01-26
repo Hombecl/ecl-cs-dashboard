@@ -92,6 +92,7 @@ export async function createCase(caseData: Partial<CSCase>): Promise<CSCase> {
 export async function updateCase(id: string, updates: Partial<CSCase>): Promise<CSCase> {
   const fields: Record<string, string | number | boolean | null> = {};
 
+  if (updates.platformOrderNumber) fields['Platform Order Number'] = updates.platformOrderNumber;
   if (updates.status) fields['Status'] = updates.status;
   if (updates.issueCategory) fields['Issue Category'] = updates.issueCategory;
   if (updates.sentiment) fields['Sentiment'] = updates.sentiment;

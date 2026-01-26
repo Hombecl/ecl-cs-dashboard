@@ -17,6 +17,7 @@ interface InfoPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   onCaseUpdate?: (id: string, updates: Partial<CSCase>) => void;
+  onCaseRefresh?: (updatedCase: CSCase) => void;
 }
 
 type TabType = 'order' | 'tracking' | 'processing' | 'history' | 'customer';
@@ -33,7 +34,7 @@ const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 320;
 
-export default function InfoPanel({ caseData, isOpen, onToggle, onCaseUpdate }: InfoPanelProps) {
+export default function InfoPanel({ caseData, isOpen, onToggle, onCaseUpdate, onCaseRefresh }: InfoPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>('order');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -191,7 +192,7 @@ export default function InfoPanel({ caseData, isOpen, onToggle, onCaseUpdate }: 
 
         {/* Tab Content */}
         <div className="p-4">
-          {activeTab === 'order' && <OrderTab order={caseData.order} customerName={caseData.customerName ?? undefined} storeCode={caseData.storeCode ?? undefined} caseId={caseData.id} onOrderLinked={onCaseUpdate} />}
+          {activeTab === 'order' && <OrderTab order={caseData.order} customerName={caseData.customerName ?? undefined} storeCode={caseData.storeCode ?? undefined} caseId={caseData.id} onOrderLinked={onCaseRefresh} />}
           {activeTab === 'tracking' && caseData.order && <TrackingPanel order={caseData.order} />}
           {activeTab === 'processing' && <ProcessingTab order={caseData.order} cancelStatus={cancelStatus} />}
           {activeTab === 'history' && caseData.customerEmail && (
@@ -212,7 +213,7 @@ interface PotentialOrdersSearchProps {
   customerName: string;
   storeCode?: string;
   caseId: string;
-  onOrderLinked?: (id: string, updates: Partial<CSCase>) => void;
+  onOrderLinked?: (updatedCase: CSCase) => void;
 }
 
 function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked }: PotentialOrdersSearchProps) {
@@ -295,9 +296,9 @@ function PotentialOrdersSearch({ customerName, storeCode, caseId, onOrderLinked 
 
       if (data.success) {
         setLinkSuccess(order.airtableRecordId);
-        // Notify parent to refresh case data
-        if (onOrderLinked) {
-          onOrderLinked(caseId, { platformOrderNumber: orderNumber });
+        // Notify parent with the updated case data (includes enriched order)
+        if (onOrderLinked && data.data) {
+          onOrderLinked(data.data);
         }
       } else {
         setError(data.error || 'Failed to link order');
@@ -506,7 +507,7 @@ interface OrderTabProps {
   customerName?: string;
   storeCode?: string;
   caseId: string;
-  onOrderLinked?: (id: string, updates: Partial<CSCase>) => void;
+  onOrderLinked?: (updatedCase: CSCase) => void;
 }
 
 function OrderTab({ order, customerName, storeCode, caseId, onOrderLinked }: OrderTabProps) {
