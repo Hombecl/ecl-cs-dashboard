@@ -27,7 +27,7 @@ export function isValidEmail(email: string): boolean {
 /**
  * Valid case status values (whitelist)
  */
-const VALID_STATUSES = ['New', 'In Progress', 'Pending', 'Resolved', 'Escalated'] as const;
+const VALID_STATUSES = ['New', 'In Progress', 'Pending Customer', 'Pending Internal', 'Replied', 'Resolved', 'Escalated'] as const;
 export type CaseStatus = typeof VALID_STATUSES[number];
 
 /**

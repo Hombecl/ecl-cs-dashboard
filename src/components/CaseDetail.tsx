@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { CSCase } from '@/types';
 import { differenceInHours, format, formatDistanceToNow } from 'date-fns';
 import {
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import FollowUpChecklist from './FollowUpChecklist';
 import CustomerProfileModal from './CustomerProfileModal';
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
 
 interface CaseDetailProps {
   caseData: CSCase;
@@ -79,42 +80,164 @@ export default function CaseDetail({
   totalCases,
   onSubmitAndNext,
 }: CaseDetailProps) {
-  const [draftReply, setDraftReply] = useState(caseData.aiDraftReply || '');
+  // LocalStorage key for draft auto-save
+  const draftStorageKey = `cs-draft-${caseData.id}`;
+
+  // Initialize draft from localStorage or caseData
+  const getInitialDraft = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      const savedDraft = localStorage.getItem(draftStorageKey);
+      if (savedDraft) return savedDraft;
+    }
+    return caseData.aiDraftReply || '';
+  }, [draftStorageKey, caseData.aiDraftReply]);
+
+  const [draftReply, setDraftReply] = useState(getInitialDraft);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [copiedOrderNum, setCopiedOrderNum] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [showCustomerProfile, setShowCustomerProfile] = useState(false);
   const [showFullMessage, setShowFullMessage] = useState(false);
+  const [draftChanged, setDraftChanged] = useState(false);
+  const [hasLocalDraft, setHasLocalDraft] = useState(false);
 
-  const copyOrderNumber = () => {
-    if (caseData.platformOrderNumber) {
-      navigator.clipboard.writeText(caseData.platformOrderNumber);
-      setCopiedOrderNum(true);
-      setTimeout(() => setCopiedOrderNum(false), 2000);
+  // Use shared copy hooks
+  const { copied: copiedOrderNum, copy: copyOrderNum } = useCopyToClipboard();
+  const { copied, copy: copyDraft } = useCopyToClipboard();
+
+  // Ref for saved timeout cleanup
+  const savedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
+    };
+  }, []);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle when not typing in input/textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key === 'ArrowLeft' && hasPrevCase && onPrevCase) {
+        e.preventDefault();
+        onPrevCase();
+      } else if (e.key === 'ArrowRight' && hasNextCase && onNextCase) {
+        e.preventDefault();
+        onNextCase();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasPrevCase, hasNextCase, onPrevCase, onNextCase]);
+
+  // Check for local draft on mount and when case changes
+  useEffect(() => {
+    const savedDraft = localStorage.getItem(draftStorageKey);
+    if (savedDraft && savedDraft !== caseData.aiDraftReply) {
+      setDraftReply(savedDraft);
+      setHasLocalDraft(true);
+      setDraftChanged(true);
+    } else {
+      setDraftReply(caseData.aiDraftReply || '');
+      setHasLocalDraft(false);
+      setDraftChanged(false);
     }
-  };
+  }, [caseData.id, caseData.aiDraftReply, draftStorageKey]);
+
+  // Auto-save draft to localStorage (debounced)
+  useEffect(() => {
+    if (!draftReply) {
+      localStorage.removeItem(draftStorageKey);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      localStorage.setItem(draftStorageKey, draftReply);
+    }, 500); // Debounce 500ms
+
+    return () => clearTimeout(timeoutId);
+  }, [draftReply, draftStorageKey]);
+
+  // Clear localStorage when draft is saved to server
+  const clearLocalDraft = useCallback(() => {
+    localStorage.removeItem(draftStorageKey);
+    setHasLocalDraft(false);
+  }, [draftStorageKey]);
+
+  const handleCopyOrderNumber = useCallback(() => {
+    if (caseData.platformOrderNumber) {
+      copyOrderNum(caseData.platformOrderNumber);
+    }
+  }, [caseData.platformOrderNumber, copyOrderNum]);
 
   const generateDraft = async () => {
+    if (isGenerating) return; // Prevent concurrent generation
     setIsGenerating(true);
+    setGenerateError(null);
     try {
       const response = await fetch(`/api/cases/${caseData.id}/generate-reply`, {
         method: 'POST',
       });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
       if (data.success) {
         setDraftReply(data.data.reply);
         onUpdate(caseData.id, { aiDraftReply: data.data.reply });
+      } else {
+        setGenerateError(data.error || 'Failed to generate draft');
       }
     } catch (error) {
       console.error('Failed to generate draft:', error);
+      setGenerateError('Network error. Please try again.');
     }
     setIsGenerating(false);
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(draftReply);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = useCallback(() => {
+    copyDraft(draftReply);
+  }, [copyDraft, draftReply]);
+
+  const saveDraft = async () => {
+    if (!draftReply.trim() || isSaving) return; // Prevent concurrent saves
+    setIsSaving(true);
+    try {
+      await onUpdate(caseData.id, { aiDraftReply: draftReply });
+      clearLocalDraft(); // Clear localStorage after successful save
+      setSaved(true);
+      setDraftChanged(false);
+      if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
+      savedTimeoutRef.current = setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to save draft:', error);
+    }
+    setIsSaving(false);
+  };
+
+  const markAsReplied = async () => {
+    // Save draft first if there's content
+    if (draftReply.trim()) {
+      await onUpdate(caseData.id, {
+        aiDraftReply: draftReply,
+        status: 'Replied',
+        finalReplySent: draftReply,
+      });
+    } else {
+      await onUpdate(caseData.id, { status: 'Replied' });
+    }
+    clearLocalDraft(); // Clear localStorage after marking as replied
+    setDraftChanged(false);
+  };
+
+  const handleDraftChange = (value: string) => {
+    setDraftReply(value);
+    setDraftChanged(value !== (caseData.aiDraftReply || ''));
   };
 
   const handleStatusChange = (newStatus: CSCase['status']) => {
@@ -149,27 +272,30 @@ export default function CaseDetail({
     }
   };
 
-  // Calculate case age
-  const caseAgeHours = differenceInHours(new Date(), new Date(caseData.createdTime));
+  // Memoized calculations
+  const caseAgeHours = useMemo(
+    () => differenceInHours(new Date(), new Date(caseData.createdTime)),
+    [caseData.createdTime]
+  );
   const isCaseOverdue = caseData.status !== 'Resolved' && caseAgeHours > 24;
   const isCaseCritical = caseData.status !== 'Resolved' && caseAgeHours > 48;
 
-  // Truncate message for preview
-  const messagePreview = caseData.originalMessage?.length > 200
-    ? caseData.originalMessage.slice(0, 200) + '...'
-    : caseData.originalMessage;
+  const messagePreview = useMemo(
+    () => caseData.originalMessage?.length > 200
+      ? caseData.originalMessage.slice(0, 200) + '...'
+      : caseData.originalMessage,
+    [caseData.originalMessage]
+  );
 
-  // Get tracking summary
-  const getTrackingSummary = () => {
+  const trackingSummary = useMemo(() => {
     if (!caseData.order) return 'No order';
     if (caseData.order.actualDelivery) return `Delivered ${caseData.order.actualDelivery}`;
     if (caseData.order.trackingStatus) return caseData.order.trackingStatus;
     if (caseData.order.shipDate) return `Shipped ${caseData.order.shipDate}`;
     return 'Pending';
-  };
+  }, [caseData.order]);
 
-  // Get cancel status for order
-  const getCancelStatus = () => {
+  const cancelStatus = useMemo(() => {
     if (!caseData.order) return null;
     const order = caseData.order;
     const canCancel = !order.supplierOrderNumber && !order.shipmentDropped && !order.trackingNumber;
@@ -178,18 +304,15 @@ export default function CaseDetail({
     if (canCancel) return { text: 'Can Cancel', color: 'bg-green-100 text-green-700' };
     if (maybeCancel) return { text: 'Check Supplier', color: 'bg-yellow-100 text-yellow-700' };
     return { text: 'Cannot Cancel', color: 'bg-red-100 text-red-700' };
-  };
+  }, [caseData.order]);
 
-  const cancelStatus = getCancelStatus();
-
-  // Format received time
-  const receivedTime = caseData.createdTime ? new Date(caseData.createdTime) : null;
-  const receivedTimeFormatted = receivedTime
-    ? format(receivedTime, 'MMM d, yyyy h:mm a')
-    : 'Unknown';
-  const receivedTimeAgo = receivedTime
-    ? formatDistanceToNow(receivedTime, { addSuffix: true })
-    : '';
+  const { receivedTimeFormatted, receivedTimeAgo } = useMemo(() => {
+    const receivedTime = caseData.createdTime ? new Date(caseData.createdTime) : null;
+    return {
+      receivedTimeFormatted: receivedTime ? format(receivedTime, 'MMM d, yyyy h:mm a') : 'Unknown',
+      receivedTimeAgo: receivedTime ? formatDistanceToNow(receivedTime, { addSuffix: true }) : '',
+    };
+  }, [caseData.createdTime]);
 
   // Handle submit and next
   const handleSubmitAndNext = () => {
@@ -254,14 +377,14 @@ export default function CaseDetail({
                 #{caseData.platformOrderNumber?.slice(-6) || 'N/A'}
               </h2>
               <button
-                onClick={copyOrderNumber}
+                onClick={handleCopyOrderNumber}
                 className="p-1 text-gray-400 hover:text-gray-600 rounded"
                 title="Copy order number"
               >
                 {copiedOrderNum ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
               </button>
               <a
-                href={`https://seller.walmart.com/order-management?query=${encodeURIComponent(caseData.platformOrderNumber || '')}`}
+                href={`https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=${encodeURIComponent(caseData.platformOrderNumber || '')}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition"
@@ -297,6 +420,7 @@ export default function CaseDetail({
               <option value="In Progress">In Progress</option>
               <option value="Pending Customer">Pending Customer</option>
               <option value="Pending Internal">Pending Internal</option>
+              <option value="Replied">Replied</option>
               <option value="Resolved">Resolved</option>
               <option value="Escalated">Escalated</option>
             </select>
@@ -320,7 +444,7 @@ export default function CaseDetail({
                 </span>
                 <span className="flex items-center space-x-1">
                   <Truck className="h-3 w-3" />
-                  <span>{getTrackingSummary()}</span>
+                  <span>{trackingSummary}</span>
                 </span>
               </>
             )}
@@ -358,24 +482,6 @@ export default function CaseDetail({
               </span>
             )}
           </div>
-
-          {/* Tracking Numbers */}
-          {caseData.order && (caseData.order.trackingNumber || caseData.order.marketplaceTrackingNumber) && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mb-3 bg-gray-50 rounded px-3 py-2">
-              {caseData.order.trackingNumber && (
-                <span className="flex items-center space-x-1.5">
-                  <span className="text-gray-400">Actual:</span>
-                  <code className="bg-white px-1.5 py-0.5 rounded border text-gray-700">{caseData.order.trackingNumber}</code>
-                </span>
-              )}
-              {caseData.order.marketplaceTrackingNumber && caseData.order.marketplaceTrackingNumber !== caseData.order.trackingNumber && (
-                <span className="flex items-center space-x-1.5">
-                  <span className="text-gray-400">Walmart:</span>
-                  <code className="bg-white px-1.5 py-0.5 rounded border text-gray-700">{caseData.order.marketplaceTrackingNumber}</code>
-                </span>
-              )}
-            </div>
-          )}
 
           {/* Customer Message */}
           <div className="bg-gray-50 rounded p-3 mb-3">
@@ -437,6 +543,17 @@ export default function CaseDetail({
             <div className="flex items-center space-x-2">
               <Sparkles className="h-4 w-4 text-purple-500" />
               <span className="font-medium text-gray-900">Draft Reply</span>
+              {hasLocalDraft && (
+                <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded" title="Draft recovered from browser">
+                  Recovered
+                </span>
+              )}
+              {draftChanged && !hasLocalDraft && (
+                <span className="text-xs px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded">Unsaved</span>
+              )}
+              {caseData.status === 'Replied' && (
+                <span className="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded">Replied</span>
+              )}
             </div>
             <div className="flex items-center space-x-2">
               <button
@@ -448,6 +565,14 @@ export default function CaseDetail({
                 <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
               </button>
               <button
+                onClick={saveDraft}
+                disabled={!draftReply || isSaving || !draftChanged}
+                className="flex items-center space-x-1 px-3 py-1.5 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 rounded transition disabled:opacity-50"
+              >
+                {saved ? <Check className="h-3 w-3" /> : isSaving ? <RefreshCw className="h-3 w-3 animate-spin" /> : null}
+                <span>{saved ? 'Saved!' : isSaving ? 'Saving...' : 'Save Draft'}</span>
+              </button>
+              <button
                 onClick={copyToClipboard}
                 disabled={!draftReply}
                 className="flex items-center space-x-1 px-3 py-1.5 text-xs bg-gray-100 text-gray-700 hover:bg-gray-200 rounded transition disabled:opacity-50"
@@ -457,12 +582,32 @@ export default function CaseDetail({
               </button>
             </div>
           </div>
+          {generateError && (
+            <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700 flex items-center space-x-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              <span>{generateError}</span>
+              <button onClick={() => setGenerateError(null)} className="ml-auto text-red-500 hover:text-red-700">
+                ×
+              </button>
+            </div>
+          )}
           <textarea
             value={draftReply}
-            onChange={(e) => setDraftReply(e.target.value)}
+            onChange={(e) => handleDraftChange(e.target.value)}
             placeholder="Click 'Generate' to create an AI draft reply..."
             className="w-full h-48 p-3 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
           />
+          {/* Mark as Replied button */}
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={markAsReplied}
+              disabled={caseData.status === 'Replied'}
+              className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send className="h-4 w-4" />
+              <span>{caseData.status === 'Replied' ? 'Already Replied' : 'Mark as Replied'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Playbook Hints - Collapsible */}

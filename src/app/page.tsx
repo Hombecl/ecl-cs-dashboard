@@ -1,21 +1,53 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { CSCase } from '@/types';
 import CaseList from '@/components/CaseList';
 import CaseDetail from '@/components/CaseDetail';
 import InfoPanel from '@/components/InfoPanel';
 import Header from '@/components/Header';
 import StatsBar from '@/components/StatsBar';
-import { Search, X, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Search, X, PanelLeftClose, PanelLeft, AlertCircle, RefreshCw } from 'lucide-react';
 
 export default function Dashboard() {
   const [cases, setCases] = useState<CSCase[]>([]);
   const [selectedCase, setSelectedCase] = useState<CSCase | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [storeFilter, setStoreFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchInput, setSearchInput] = useState<string>('');
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const fetchCasesAbortRef = useRef<AbortController | null>(null);
+  const fetchCaseDetailAbortRef = useRef<AbortController | null>(null);
+
+  // Debounced search handler
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchInput(value);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      setSearchQuery(value);
+    }, 300);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+      if (fetchCasesAbortRef.current) {
+        fetchCasesAbortRef.current.abort();
+      }
+      if (fetchCaseDetailAbortRef.current) {
+        fetchCaseDetailAbortRef.current.abort();
+      }
+    };
+  }, []);
 
   // Panel visibility states
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
@@ -53,30 +85,64 @@ export default function Dashboard() {
   }, [filter]);
 
   const fetchCases = async () => {
+    // Cancel any in-flight request
+    if (fetchCasesAbortRef.current) {
+      fetchCasesAbortRef.current.abort();
+    }
+    fetchCasesAbortRef.current = new AbortController();
+
     setLoading(true);
+    setError(null);
     try {
       const params = filter !== 'all' ? `?status=${encodeURIComponent(filter)}` : '';
-      const response = await fetch(`/api/cases${params}`);
+      const response = await fetch(`/api/cases${params}`, {
+        signal: fetchCasesAbortRef.current.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
       if (data.success) {
         setCases(data.data);
+      } else {
+        setError(data.error || 'Failed to load cases');
       }
-    } catch (error) {
-      console.error('Failed to fetch cases:', error);
+    } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      console.error('Failed to fetch cases:', err);
+      setError('Failed to connect to server. Please try again.');
     }
     setLoading(false);
   };
 
   const handleCaseSelect = async (caseItem: CSCase) => {
+    // Cancel any in-flight case detail request
+    if (fetchCaseDetailAbortRef.current) {
+      fetchCaseDetailAbortRef.current.abort();
+    }
+    fetchCaseDetailAbortRef.current = new AbortController();
+
     // Fetch full case details with order info
     try {
-      const response = await fetch(`/api/cases/${caseItem.id}`);
+      const response = await fetch(`/api/cases/${caseItem.id}`, {
+        signal: fetchCaseDetailAbortRef.current.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
       if (data.success) {
         setSelectedCase(data.data);
       }
-    } catch (error) {
-      console.error('Failed to fetch case details:', error);
+    } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      console.error('Failed to fetch case details:', err);
       setSelectedCase(caseItem);
     }
   };
@@ -163,14 +229,14 @@ export default function Dashboard() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={searchInput}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search order #, name..."
                   className="w-full pl-9 pr-8 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                {searchQuery && (
+                {searchInput && (
                   <button
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => { setSearchInput(''); setSearchQuery(''); }}
                     className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 rounded"
                   >
                     <X className="h-3 w-3" />
@@ -209,6 +275,24 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {error && (
+              <div className="p-3 bg-red-50 border-b border-red-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-red-700">
+                    <AlertCircle className="h-4 w-4" />
+                    <span className="text-sm">{error}</span>
+                  </div>
+                  <button
+                    onClick={fetchCases}
+                    className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded transition"
+                    title="Retry"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <CaseList
               cases={filteredCases}
               selectedCaseId={selectedCase?.id}
@@ -236,17 +320,19 @@ export default function Dashboard() {
         {/* Center - Case Detail / Work Area */}
         <div className="flex-1 overflow-hidden">
           {selectedCase ? (
-            <CaseDetail
-              caseData={selectedCase}
-              onUpdate={handleCaseUpdate}
-              onPrevCase={handlePrevCase}
-              onNextCase={handleNextCase}
-              hasPrevCase={currentCaseIndex > 0}
-              hasNextCase={currentCaseIndex < filteredCases.length - 1}
-              currentIndex={currentCaseIndex}
-              totalCases={filteredCases.length}
-              onSubmitAndNext={handleSubmitAndNext}
-            />
+            <ErrorBoundary>
+              <CaseDetail
+                caseData={selectedCase}
+                onUpdate={handleCaseUpdate}
+                onPrevCase={handlePrevCase}
+                onNextCase={handleNextCase}
+                hasPrevCase={currentCaseIndex > 0}
+                hasNextCase={currentCaseIndex < filteredCases.length - 1}
+                currentIndex={currentCaseIndex}
+                totalCases={filteredCases.length}
+                onSubmitAndNext={handleSubmitAndNext}
+              />
+            </ErrorBoundary>
           ) : (
             <div className="h-full flex items-center justify-center text-gray-500">
               <div className="text-center">

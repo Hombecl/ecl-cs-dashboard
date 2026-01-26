@@ -1,8 +1,9 @@
 'use client';
 
+import { memo, useMemo, useCallback } from 'react';
 import { CSCase } from '@/types';
 import { formatDistanceToNow, differenceInHours } from 'date-fns';
-import { AlertCircle, Clock, CheckCircle, User, Store, AlertTriangle } from 'lucide-react';
+import { AlertCircle, Clock, CheckCircle, User, AlertTriangle, Send, Package } from 'lucide-react';
 
 interface CaseListProps {
   cases: CSCase[];
@@ -42,108 +43,159 @@ export default function CaseList({ cases, selectedCaseId, onSelectCase, loading 
   );
 }
 
+// Helper functions outside component to avoid recreation
+const getStatusDisplay = (status: string) => {
+  switch (status) {
+    case 'New':
+      return { icon: <div className="w-2 h-2 bg-blue-500 rounded-full" />, color: 'text-blue-600', label: 'New' };
+    case 'In Progress':
+      return { icon: <Clock className="w-3 h-3 text-yellow-500" />, color: 'text-yellow-600', label: 'In Progress' };
+    case 'Pending Customer':
+      return { icon: <AlertCircle className="w-3 h-3 text-orange-500" />, color: 'text-orange-600', label: 'Pending' };
+    case 'Pending Internal':
+      return { icon: <Package className="w-3 h-3 text-purple-500" />, color: 'text-purple-600', label: 'Internal' };
+    case 'Replied':
+      return { icon: <Send className="w-3 h-3 text-green-500" />, color: 'text-green-600', label: 'Replied' };
+    case 'Resolved':
+      return { icon: <CheckCircle className="w-3 h-3 text-green-500" />, color: 'text-green-600', label: 'Resolved' };
+    case 'Escalated':
+      return { icon: <AlertCircle className="w-3 h-3 text-red-500" />, color: 'text-red-600', label: 'Escalated' };
+    default:
+      return { icon: <div className="w-2 h-2 bg-gray-400 rounded-full" />, color: 'text-gray-600', label: status };
+  }
+};
+
+const getSentimentColor = (sentiment: string | null) => {
+  if (!sentiment) return null;
+  switch (sentiment) {
+    case 'Frustrated':
+      return 'bg-red-100 text-red-700 border-red-200';
+    case 'Concerned':
+      return 'bg-orange-100 text-orange-700 border-orange-200';
+    case 'Polite':
+      return 'bg-green-100 text-green-700 border-green-200';
+    default:
+      return 'bg-gray-100 text-gray-700 border-gray-200';
+  }
+};
+
+const truncateMessage = (message: string, maxLength: number = 50) => {
+  if (message.length <= maxLength) return message;
+  return message.substring(0, maxLength) + '...';
+};
+
 interface CaseListItemProps {
   caseItem: CSCase;
   isSelected: boolean;
   onClick: () => void;
 }
 
-function CaseListItem({ caseItem, isSelected, onClick }: CaseListItemProps) {
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'New':
-        return <div className="w-2 h-2 bg-blue-500 rounded-full" />;
-      case 'In Progress':
-        return <Clock className="w-3 h-3 text-yellow-500" />;
-      case 'Pending Customer':
-      case 'Pending Internal':
-        return <AlertCircle className="w-3 h-3 text-orange-500" />;
-      case 'Resolved':
-        return <CheckCircle className="w-3 h-3 text-green-500" />;
-      case 'Escalated':
-        return <AlertCircle className="w-3 h-3 text-red-500" />;
-      default:
-        return <div className="w-2 h-2 bg-gray-400 rounded-full" />;
+const CaseListItem = memo(function CaseListItem({ caseItem, isSelected, onClick }: CaseListItemProps) {
+  // Memoize computed values
+  const caseAgeHours = useMemo(
+    () => differenceInHours(new Date(), new Date(caseItem.createdTime)),
+    [caseItem.createdTime]
+  );
+
+  const isOverdue = caseItem.status !== 'Resolved' && caseItem.status !== 'Replied' && caseAgeHours > 24;
+  const isCritical = caseItem.status !== 'Resolved' && caseItem.status !== 'Replied' && caseAgeHours > 48;
+
+  const statusDisplay = useMemo(() => getStatusDisplay(caseItem.status), [caseItem.status]);
+  const sentimentColor = useMemo(() => getSentimentColor(caseItem.sentiment), [caseItem.sentiment]);
+  const truncatedMessage = useMemo(
+    () => truncateMessage(caseItem.originalMessage || 'No message', 80),
+    [caseItem.originalMessage]
+  );
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClick();
     }
-  };
-
-  const getUrgencyBadge = (urgency: string | null) => {
-    if (!urgency) return null;
-    const colors = {
-      High: 'bg-red-100 text-red-700',
-      Medium: 'bg-yellow-100 text-yellow-700',
-      Low: 'bg-green-100 text-green-700',
-    };
-    return (
-      <span className={`text-xs px-1.5 py-0.5 rounded ${colors[urgency as keyof typeof colors] || 'bg-gray-100 text-gray-700'}`}>
-        {urgency}
-      </span>
-    );
-  };
-
-  const truncateMessage = (message: string, maxLength: number = 60) => {
-    if (message.length <= maxLength) return message;
-    return message.substring(0, maxLength) + '...';
-  };
-
-  // Calculate case age for warning
-  const caseAgeHours = differenceInHours(new Date(), new Date(caseItem.createdTime));
-  const isOverdue = caseItem.status !== 'Resolved' && caseAgeHours > 24;
-  const isCritical = caseItem.status !== 'Resolved' && caseAgeHours > 48;
+  }, [onClick]);
 
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-100 cursor-pointer transition hover:bg-gray-50 ${
-        isSelected ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
-      } ${isCritical ? 'bg-red-50 border-l-2 border-l-red-500' : isOverdue && !isSelected ? 'bg-orange-50 border-l-2 border-l-orange-400' : ''}`}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={`Case ${caseItem.platformOrderNumber || 'N/A'} - ${caseItem.customerName || 'Unknown'} - ${caseItem.status}`}
+      aria-selected={isSelected}
+      className={`p-3 border-b border-gray-100 cursor-pointer transition hover:bg-gray-50 ${
+        isSelected ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'
+      } ${isCritical && !isSelected ? 'bg-red-50 !border-l-red-500' : isOverdue && !isSelected ? 'bg-orange-50 !border-l-orange-400' : ''}`}
     >
-      <div className="flex items-start justify-between mb-1">
+      {/* Row 1: Store Code (prominent) + Status */}
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center space-x-2">
-          {getStatusIcon(caseItem.status)}
-          <span className="font-medium text-sm text-gray-900">
-            #{caseItem.platformOrderNumber?.slice(-6) || 'N/A'}
-          </span>
           {caseItem.storeCode && (
-            <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded font-medium">
+            <span className="text-sm px-2 py-1 bg-purple-600 text-white rounded font-bold">
               {caseItem.storeCode}
             </span>
           )}
+          <span className="font-medium text-sm text-gray-900">
+            #{caseItem.platformOrderNumber?.slice(-6) || 'N/A'}
+          </span>
         </div>
-        {getUrgencyBadge(caseItem.urgency)}
+        <div className="flex items-center space-x-1">
+          {statusDisplay.icon}
+          <span className={`text-xs font-medium ${statusDisplay.color}`}>
+            {statusDisplay.label}
+          </span>
+        </div>
       </div>
 
-      <div className="flex items-center space-x-1 mb-1 text-sm text-gray-600">
-        <User className="w-3 h-3" />
-        <span>{caseItem.customerName || 'Unknown'}</span>
+      {/* Row 2: Customer + Category */}
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center space-x-1.5 text-sm text-gray-700">
+          <User className="w-3 h-3 text-gray-400" />
+          <span className="truncate max-w-[120px]">{caseItem.customerName || 'Unknown'}</span>
+        </div>
+        <div className="flex items-center space-x-1">
+          {caseItem.issueCategory && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+              {caseItem.issueCategory}
+            </span>
+          )}
+          {caseItem.sentiment && sentimentColor && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${sentimentColor}`}>
+              {caseItem.sentiment === 'Frustrated' ? '😠' : caseItem.sentiment === 'Concerned' ? '😟' : caseItem.sentiment === 'Polite' ? '😊' : '😐'}
+            </span>
+          )}
+        </div>
       </div>
 
-      <p className="text-sm text-gray-500 mb-2">
-        {truncateMessage(caseItem.originalMessage || 'No message')}
+      {/* Row 3: Message preview */}
+      <p className="text-xs text-gray-500 mb-2 line-clamp-2">
+        {truncatedMessage}
       </p>
 
+      {/* Row 4: Time + Warning */}
       <div className="flex items-center justify-between">
-        {caseItem.issueCategory && (
-          <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
-            {caseItem.issueCategory}
-          </span>
-        )}
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1.5">
+          {caseItem.urgency === 'High' && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded font-medium">
+              HIGH
+            </span>
+          )}
           {isCritical && (
-            <span title="Critical: >48h">
-              <AlertTriangle className="w-3 h-3 text-red-500" />
+            <span className="flex items-center space-x-0.5 text-[10px] text-red-600 font-medium">
+              <AlertTriangle className="w-3 h-3" />
+              <span>&gt;48h</span>
             </span>
           )}
           {isOverdue && !isCritical && (
-            <span title="Overdue: >24h">
-              <Clock className="w-3 h-3 text-orange-500" />
+            <span className="flex items-center space-x-0.5 text-[10px] text-orange-600">
+              <Clock className="w-3 h-3" />
+              <span>&gt;24h</span>
             </span>
           )}
-          <span className={`text-xs ${isCritical ? 'text-red-600 font-medium' : isOverdue ? 'text-orange-600' : 'text-gray-400'}`}>
-            {formatDistanceToNow(new Date(caseItem.createdTime), { addSuffix: true })}
-          </span>
         </div>
+        <span className={`text-[10px] ${isCritical ? 'text-red-600 font-medium' : isOverdue ? 'text-orange-600' : 'text-gray-400'}`}>
+          {formatDistanceToNow(new Date(caseItem.createdTime), { addSuffix: true })}
+        </span>
       </div>
     </div>
   );
-}
+});

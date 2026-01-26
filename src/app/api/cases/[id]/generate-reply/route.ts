@@ -6,6 +6,7 @@ import {
   getPlaybookByCategory
 } from '@/lib/airtable';
 import { generateDraftReply } from '@/lib/ai';
+import { isValidRecordId } from '@/lib/sanitize';
 
 export async function POST(
   request: NextRequest,
@@ -13,6 +14,14 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+
+    // Validate record ID format
+    if (!isValidRecordId(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
 
     // Get case data
     const caseData = await getCaseById(id);

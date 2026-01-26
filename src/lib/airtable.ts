@@ -109,6 +109,8 @@ export async function updateCase(id: string, updates: Partial<CSCase>): Promise<
   if (updates.resolvedAt) fields['Resolved At'] = updates.resolvedAt;
   if (updates.followUpDate) fields['Follow Up Date'] = updates.followUpDate;
   if (updates.assignedTo) fields['Assigned To'] = updates.assignedTo;
+  if (updates.aiSummary) fields['AI Summary'] = updates.aiSummary;
+  if (updates.aiSummaryGeneratedAt) fields['AI Summary Generated At'] = updates.aiSummaryGeneratedAt;
 
   const record = await csCasesTable.update(id, fields as Airtable.FieldSet);
   return mapRecordToCase(record);
@@ -141,6 +143,8 @@ function mapRecordToCase(record: Airtable.Record<Airtable.FieldSet>): CSCase {
     storeCode: record.get('Store Code') as string | null,
     assignedTo: record.get('Assigned To') as string | null,
     createdTime: record._rawJson.createdTime,
+    aiSummary: record.get('AI Summary') as string | null,
+    aiSummaryGeneratedAt: record.get('AI Summary Generated At') as string | null,
   };
 }
 
@@ -189,6 +193,59 @@ export async function getOrdersByCustomerEmail(email: string): Promise<OrderInfo
   }
 }
 
+export async function searchOrdersByCustomerName(
+  firstName: string,
+  lastName: string,
+  storeCode?: string,
+  daysBack: number = 30
+): Promise<OrderInfo[]> {
+  try {
+    // Escape inputs to prevent formula injection
+    const escapedFirstName = escapeAirtableValue(firstName.trim().toLowerCase());
+    const escapedLastName = escapeAirtableValue(lastName.trim().toLowerCase());
+    const escapedStoreCode = storeCode ? escapeAirtableValue(storeCode) : null;
+
+    // Calculate date range (last N days)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+    // Build filter formula
+    // Match first name in Recipient First Name field (case insensitive)
+    // AND match last name in Recipient Name field
+    // AND filter by store code if provided
+    // AND only orders from last N days
+    let filterFormula = `AND(
+      SEARCH('${escapedFirstName}', LOWER(ARRAYJOIN({Recipient First Name_f}, ','))),
+      SEARCH('${escapedLastName}', LOWER(ARRAYJOIN({Recipient Name_f}, ','))),
+      IS_AFTER({Order Date}, '${cutoffDateStr}')
+    )`;
+
+    // Add store code filter if provided
+    if (escapedStoreCode) {
+      filterFormula = `AND(
+        SEARCH('${escapedFirstName}', LOWER(ARRAYJOIN({Recipient First Name_f}, ','))),
+        SEARCH('${escapedLastName}', LOWER(ARRAYJOIN({Recipient Name_f}, ','))),
+        {Shop Code_f} = '${escapedStoreCode}',
+        IS_AFTER({Order Date}, '${cutoffDateStr}')
+      )`;
+    }
+
+    const records = await ordersTable
+      .select({
+        filterByFormula: filterFormula,
+        sort: [{ field: 'Order Date', direction: 'desc' }],
+        maxRecords: 10, // Limit to 10 potential matches
+      })
+      .all();
+
+    return records.map(record => mapRecordToOrder(record));
+  } catch (error) {
+    console.error('Error searching orders by customer name:', error);
+    return [];
+  }
+}
+
 function mapRecordToOrder(record: Airtable.Record<Airtable.FieldSet>): OrderInfo {
   const platformOrderNumbers = record.get('Platform Order Number (from 4Seller)') as unknown as string[] | undefined;
   const supplierLinks = record.get('Primary Supplier Link (from Linked SKU)') as unknown as string[] | undefined;
@@ -206,6 +263,7 @@ function mapRecordToOrder(record: Airtable.Record<Airtable.FieldSet>): OrderInfo
     recipientAddress: (record.get('Recipient Full Address_f') as unknown as string[])?.[0] || '',
     recipientPhone: (record.get('Recipient Phone Number_f') as unknown as string[])?.[0] || null,
     status: record.get('Status') as unknown as string || '',
+    storeCode: (record.get('Shop Code_f') as unknown as string[])?.[0] || null,
     // Shipping dates
     shipDate: record.get('Shipper Dropoff Date') as unknown as string | null,
     latestShipDate: (record.get('Latest Ship Date (from 4Seller)') as unknown as string[])?.[0] || null,

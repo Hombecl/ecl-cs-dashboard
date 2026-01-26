@@ -95,6 +95,9 @@ export default function FeedbackModal({ isOpen, onClose, relatedCaseId }: Feedba
         }),
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const result = await response.json();
 
       if (result.success) {

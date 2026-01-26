@@ -25,6 +25,9 @@ export interface CSCase {
   storeCode: string | null;
   assignedTo: string | null;
   createdTime: string;
+  // AI Summary (cached to avoid regeneration)
+  aiSummary: string | null;
+  aiSummaryGeneratedAt: string | null;
   // Enriched fields from Order lookup
   order?: OrderInfo | null;
 }
@@ -49,6 +52,7 @@ export type CaseStatus =
   | 'In Progress'
   | 'Pending Customer'
   | 'Pending Internal'
+  | 'Replied'
   | 'Resolved'
   | 'Escalated';
 
@@ -78,6 +82,7 @@ export interface OrderInfo {
   recipientAddress: string;
   recipientPhone: string | null;
   status: string;
+  storeCode: string | null;
   // Shipping dates
   shipDate: string | null;
   latestShipDate: string | null;

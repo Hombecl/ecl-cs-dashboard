@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { CSCase } from '@/types';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { CSCase, OrderInfo } from '@/types';
 import {
   Package, Truck, Factory, History, User,
-  ChevronRight, ChevronLeft, X
+  ChevronRight, ChevronLeft, GripVertical,
+  Search, AlertCircle, ExternalLink, Loader2
 } from 'lucide-react';
 import TrackingPanel from './TrackingPanel';
 import CustomerHistory from './CustomerHistory';
@@ -26,8 +27,48 @@ const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
   { id: 'customer', label: 'Customer', icon: <User className="h-4 w-4" /> },
 ];
 
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 600;
+const DEFAULT_WIDTH = 320;
+
 export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>('order');
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+
+      // Calculate new width based on mouse position from right edge
+      const newWidth = window.innerWidth - e.clientX;
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
 
   // Get cancel status for order
   const getCancelStatus = () => {
@@ -74,9 +115,25 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
   }
 
   return (
-    <div className="w-80 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+    <div
+      ref={panelRef}
+      style={{ width: `${width}px` }}
+      className="bg-white border-l border-gray-200 flex flex-col overflow-hidden relative"
+    >
+      {/* Resize Handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-500 transition-colors z-10 group flex items-center ${
+          isResizing ? 'bg-blue-500' : 'bg-transparent'
+        }`}
+      >
+        <div className="absolute left-0 w-4 h-12 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <GripVertical className="h-4 w-4 text-gray-400" />
+        </div>
+      </div>
+
       {/* Header */}
-      <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+      <div className="p-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
         <span className="text-sm font-medium text-gray-700">Info Panel</span>
         <button
           onClick={onToggle}
@@ -86,49 +143,242 @@ export default function InfoPanel({ caseData, isOpen, onToggle }: InfoPanelProps
         </button>
       </div>
 
-      {/* AI Summary - Always visible at top */}
-      <div className="p-3 border-b border-gray-200">
-        <AISummaryPanel caseId={caseData.id} />
-      </div>
+      {/* Scrollable Content Area */}
+      <div className="flex-1 overflow-y-auto">
+        {/* AI Summary */}
+        <div className="p-3 border-b border-gray-200">
+          <AISummaryPanel caseId={caseData.id} />
+        </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 py-2 px-1 text-xs font-medium transition flex flex-col items-center space-y-1 ${
-              activeTab === tab.id
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
+        {/* Tabs */}
+        <div className="flex border-b border-gray-200 sticky top-0 bg-white z-10">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 py-2 px-1 text-xs font-medium transition flex flex-col items-center space-y-1 ${
+                activeTab === tab.id
+                  ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'order' && <OrderTab order={caseData.order} />}
-        {activeTab === 'tracking' && caseData.order && <TrackingPanel order={caseData.order} />}
-        {activeTab === 'processing' && <ProcessingTab order={caseData.order} cancelStatus={cancelStatus} />}
-        {activeTab === 'history' && caseData.customerEmail && (
-          <CustomerHistory
-            customerEmail={caseData.customerEmail}
-            currentCaseId={caseData.id}
-          />
-        )}
-        {activeTab === 'customer' && <CustomerTab caseData={caseData} />}
+        {/* Tab Content */}
+        <div className="p-4">
+          {activeTab === 'order' && <OrderTab order={caseData.order} customerName={caseData.customerName ?? undefined} storeCode={caseData.storeCode ?? undefined} />}
+          {activeTab === 'tracking' && caseData.order && <TrackingPanel order={caseData.order} />}
+          {activeTab === 'processing' && <ProcessingTab order={caseData.order} cancelStatus={cancelStatus} />}
+          {activeTab === 'history' && caseData.customerEmail && (
+            <CustomerHistory
+              customerEmail={caseData.customerEmail}
+              currentCaseId={caseData.id}
+            />
+          )}
+          {activeTab === 'customer' && <CustomerTab caseData={caseData} />}
+        </div>
       </div>
     </div>
   );
 }
 
+// Potential Orders Search Component
+function PotentialOrdersSearch({ customerName, storeCode }: { customerName: string; storeCode?: string }) {
+  const [orders, setOrders] = useState<OrderInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+
+  // Parse customer name into first and last name
+  const parseCustomerName = (name: string): { firstName: string; lastName: string } | null => {
+    const trimmed = name.trim();
+    const parts = trimmed.split(/\s+/);
+
+    if (parts.length < 2) return null;
+
+    // Assume first part is first name, rest is last name
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+
+    return { firstName, lastName };
+  };
+
+  const searchOrders = async () => {
+    const parsed = parseCustomerName(customerName);
+    if (!parsed) {
+      setError('Unable to parse customer name');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSearched(true);
+
+    try {
+      const params = new URLSearchParams({
+        firstName: parsed.firstName,
+        lastName: parsed.lastName,
+        daysBack: '60',
+      });
+
+      if (storeCode) {
+        params.append('storeCode', storeCode);
+      }
+
+      const response = await fetch(`/api/orders/search-by-name?${params}`);
+      const data = await response.json();
+
+      if (data.success) {
+        setOrders(data.data);
+      } else {
+        setError(data.error || 'Failed to search orders');
+      }
+    } catch (err) {
+      console.error('Error searching orders:', err);
+      setError('Failed to search orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const parsed = parseCustomerName(customerName);
+
+  return (
+    <div className="space-y-3">
+      <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <div className="flex items-start space-x-2">
+          <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-yellow-800">
+            <p className="font-medium">No order linked to this case</p>
+            <p className="text-xs mt-1">
+              Customer: <span className="font-medium">{customerName}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {parsed && (
+        <button
+          onClick={searchOrders}
+          disabled={loading}
+          className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition text-sm"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Searching...</span>
+            </>
+          ) : (
+            <>
+              <Search className="h-4 w-4" />
+              <span>Find Potential Orders</span>
+            </>
+          )}
+        </button>
+      )}
+
+      {!parsed && (
+        <p className="text-xs text-gray-500">
+          Cannot search: need both first and last name
+        </p>
+      )}
+
+      {error && (
+        <div className="p-2 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-xs text-red-700">{error}</p>
+        </div>
+      )}
+
+      {searched && !loading && !error && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500 font-medium">
+            {orders.length > 0
+              ? `Found ${orders.length} potential order${orders.length > 1 ? 's' : ''}:`
+              : 'No matching orders found in the last 60 days'
+            }
+          </p>
+
+          {orders.map((order) => (
+            <div
+              key={order.airtableRecordId}
+              className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs text-gray-500">Order #</p>
+                  <p className="text-sm font-mono font-medium text-gray-900">
+                    {order.platformOrderNumber || order.orderId || 'N/A'}
+                  </p>
+                </div>
+                <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded">
+                  {order.storeCode}
+                </span>
+              </div>
+
+              <div>
+                <p className="text-xs text-gray-500">Item</p>
+                <p className="text-sm text-gray-900 line-clamp-2">{order.itemName}</p>
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-gray-500">Date: </span>
+                  <span className="text-gray-700">{order.orderDate}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Amount: </span>
+                  <span className="font-medium text-gray-900">${order.salesAmount.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {order.trackingNumber && (
+                <div className="text-xs">
+                  <span className="text-gray-500">Tracking: </span>
+                  <span className="font-mono text-gray-700">{order.trackingNumber}</span>
+                </div>
+              )}
+
+              <div className="flex space-x-2 pt-1">
+                <a
+                  href={`https://airtable.com/appRCQASsApV4C33N/tbl0v0DK9s0Ke6ty1/${order.airtableRecordId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center space-x-1 text-xs px-2 py-1 bg-green-50 text-green-600 hover:bg-green-100 rounded transition"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  <span>View in Airtable</span>
+                </a>
+                {order.platformOrderNumber && (
+                  <a
+                    href={`https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=${encodeURIComponent(order.platformOrderNumber)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center space-x-1 text-xs px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded transition"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    <span>Seller Center</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Order Details Tab
-function OrderTab({ order }: { order: CSCase['order'] }) {
+function OrderTab({ order, customerName, storeCode }: { order: CSCase['order']; customerName?: string; storeCode?: string }) {
   if (!order) {
+    // Show potential orders search when no order is linked
+    if (customerName) {
+      return <PotentialOrdersSearch customerName={customerName} storeCode={storeCode} />;
+    }
     return <p className="text-sm text-gray-500">No order information available</p>;
   }
 
@@ -179,7 +429,7 @@ function OrderTab({ order }: { order: CSCase['order'] }) {
         <div className="flex flex-wrap gap-2">
           {order.platformOrderNumber && (
             <a
-              href={`https://seller.walmart.com/order-management?query=${encodeURIComponent(order.platformOrderNumber)}`}
+              href={`https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=${encodeURIComponent(order.platformOrderNumber)}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded transition"

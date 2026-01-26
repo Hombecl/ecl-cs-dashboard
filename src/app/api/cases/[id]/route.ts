@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCaseById, updateCase, getOrderByPlatformNumber } from '@/lib/airtable';
+import { isValidRecordId } from '@/lib/sanitize';
 
 export async function GET(
   request: NextRequest,
@@ -7,6 +8,15 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+
+    // Validate record ID format
+    if (!isValidRecordId(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+
     const caseData = await getCaseById(id);
 
     if (!caseData) {
@@ -41,6 +51,15 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+
+    // Validate record ID format
+    if (!isValidRecordId(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+
     const updates = await request.json();
 
     const updatedCase = await updateCase(id, updates);

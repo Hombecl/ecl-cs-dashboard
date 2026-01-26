@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import { ExternalLink, Copy, CheckCircle, ShoppingCart, Package, Store } from 'lucide-react';
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
 
 interface WalmartLinksProps {
   platformOrderNumber?: string | null;
@@ -19,22 +19,18 @@ export default function WalmartLinks({
   storeCode,
   variant = 'full'
 }: WalmartLinksProps) {
-  const [copiedOrder, setCopiedOrder] = useState(false);
-  const [copiedProduct, setCopiedProduct] = useState(false);
+  const { copied: copiedOrder, copy: copyOrder } = useCopyToClipboard();
+  const { copied: copiedProduct, copy: copyProduct } = useCopyToClipboard();
 
   const copyOrderNumber = () => {
     if (platformOrderNumber) {
-      navigator.clipboard.writeText(platformOrderNumber);
-      setCopiedOrder(true);
-      setTimeout(() => setCopiedOrder(false), 2000);
+      copyOrder(platformOrderNumber);
     }
   };
 
   const copyProductId = () => {
     if (walmartProductId) {
-      navigator.clipboard.writeText(walmartProductId);
-      setCopiedProduct(true);
-      setTimeout(() => setCopiedProduct(false), 2000);
+      copyProduct(walmartProductId);
     }
   };
 

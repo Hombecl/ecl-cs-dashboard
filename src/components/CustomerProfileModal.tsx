@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CSCase, OrderInfo } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -8,6 +8,11 @@ import {
   Truck, Calendar, DollarSign, Copy, Check, ExternalLink,
   AlertCircle, RefreshCw, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
+
+// Simple in-memory cache for customer orders
+const ordersCache = new Map<string, { data: OrderInfo[]; timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 interface CustomerProfileModalProps {
   isOpen: boolean;
@@ -18,48 +23,76 @@ interface CustomerProfileModalProps {
 export default function CustomerProfileModal({ isOpen, onClose, caseData }: CustomerProfileModalProps) {
   const [orders, setOrders] = useState<OrderInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [copiedPhone, setCopiedPhone] = useState(false);
-  const [copiedEmail, setCopiedEmail] = useState(false);
-  const [copiedAddress, setCopiedAddress] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Use shared copy hooks
+  const { copied: copiedPhone, copy: copyPhone } = useCopyToClipboard();
+  const { copied: copiedEmail, copy: copyEmail } = useCopyToClipboard();
+  const { copied: copiedAddress, copy: copyAddress } = useCopyToClipboard();
+
+  const fetchCustomerOrders = useCallback(async (forceRefresh = false) => {
+    if (!caseData.customerEmail) return;
+
+    // Check cache first
+    const cacheKey = caseData.customerEmail;
+    const cached = ordersCache.get(cacheKey);
+    if (!forceRefresh && cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      setOrders(cached.data);
+      setLoading(false);
+      return;
+    }
+
+    // Cancel any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/customer-orders?email=${encodeURIComponent(caseData.customerEmail)}`,
+        { signal: abortControllerRef.current.signal }
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const result = await response.json();
+
+      if (result.success) {
+        setOrders(result.data);
+        // Update cache
+        ordersCache.set(cacheKey, { data: result.data, timestamp: Date.now() });
+      } else {
+        setError(result.error || 'Failed to load orders');
+      }
+    } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      console.error('Failed to fetch orders:', err);
+      setError('Failed to load order history. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [caseData.customerEmail]);
 
   useEffect(() => {
     if (isOpen && caseData.customerEmail) {
       fetchCustomerOrders();
     }
-  }, [isOpen, caseData.customerEmail]);
 
-  const fetchCustomerOrders = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `/api/customer-orders?email=${encodeURIComponent(caseData.customerEmail)}`
-      );
-      const result = await response.json();
-
-      if (result.success) {
-        setOrders(result.data);
+    // Cleanup: abort on close or customer change
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    } catch (error) {
-      console.error('Failed to fetch orders:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const copyToClipboard = (text: string, type: 'phone' | 'email' | 'address') => {
-    navigator.clipboard.writeText(text);
-    if (type === 'phone') {
-      setCopiedPhone(true);
-      setTimeout(() => setCopiedPhone(false), 2000);
-    } else if (type === 'email') {
-      setCopiedEmail(true);
-      setTimeout(() => setCopiedEmail(false), 2000);
-    } else {
-      setCopiedAddress(true);
-      setTimeout(() => setCopiedAddress(false), 2000);
-    }
-  };
+    };
+  }, [isOpen, caseData.customerEmail, fetchCustomerOrders]);
 
   const getStatusColor = (status: string) => {
     const statusLower = status.toLowerCase();
@@ -132,7 +165,7 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
                   </div>
                   {caseData.order?.recipientPhone && (
                     <button
-                      onClick={() => copyToClipboard(caseData.order!.recipientPhone!, 'phone')}
+                      onClick={() => copyPhone(caseData.order!.recipientPhone!)}
                       className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition"
                     >
                       {copiedPhone ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -152,7 +185,7 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
                   </div>
                   {caseData.customerEmail && (
                     <button
-                      onClick={() => copyToClipboard(caseData.customerEmail, 'email')}
+                      onClick={() => copyEmail(caseData.customerEmail)}
                       className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition flex-shrink-0"
                     >
                       {copiedEmail ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -176,7 +209,7 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
                   </div>
                   {caseData.order?.recipientAddress && (
                     <button
-                      onClick={() => copyToClipboard(caseData.order!.recipientAddress, 'address')}
+                      onClick={() => copyAddress(caseData.order!.recipientAddress)}
                       className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition flex-shrink-0"
                     >
                       {copiedAddress ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -232,7 +265,7 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
                 <span>Order History</span>
               </h3>
               <button
-                onClick={fetchCustomerOrders}
+                onClick={() => fetchCustomerOrders(true)}
                 className="p-1 text-gray-400 hover:text-gray-600 rounded"
                 disabled={loading}
               >
@@ -243,6 +276,22 @@ export default function CustomerProfileModal({ isOpen, onClose, caseData }: Cust
             {loading ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : error ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-red-700">
+                    <AlertCircle className="h-4 w-4" />
+                    <span className="text-sm">{error}</span>
+                  </div>
+                  <button
+                    onClick={() => fetchCustomerOrders(true)}
+                    className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded transition"
+                    title="Retry"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             ) : orders.length === 0 ? (
               <div className="text-center py-8 text-gray-500">

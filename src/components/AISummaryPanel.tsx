@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Sparkles, RefreshCw, CheckCircle, XCircle,
   AlertTriangle, Lightbulb, ChevronDown, ChevronUp
@@ -24,33 +24,70 @@ export default function AISummaryPanel({ caseId }: AISummaryPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [hasOrder, setHasOrder] = useState(false);
+  const [isCached, setIsCached] = useState(false);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchSummary = useCallback(async () => {
+  const fetchSummary = useCallback(async (forceRefresh = false) => {
     if (!caseId) return;
+
+    // Cancel any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`/api/cases/${caseId}/ai-summary`);
+      const url = forceRefresh
+        ? `/api/cases/${caseId}/ai-summary?refresh=true`
+        : `/api/cases/${caseId}/ai-summary`;
+      const response = await fetch(url, {
+        signal: abortControllerRef.current.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
 
       if (data.success) {
         setSummary(data.data);
         setHasOrder(data.hasOrder || false);
+        setIsCached(data.cached || false);
+        setGeneratedAt(data.generatedAt || null);
       } else {
         setError(data.error || 'Failed to generate summary');
       }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);
     }
   }, [caseId]);
 
-  // Auto-fetch on mount
+  // Auto-fetch on mount and when caseId changes
   useEffect(() => {
-    fetchSummary();
+    // Reset state when case changes
+    setSummary(null);
+    setError(null);
+    setHasOrder(false);
+    setIsCached(false);
+    setGeneratedAt(null);
+
+    fetchSummary(false);
+
+    // Cleanup: abort on unmount or caseId change
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [fetchSummary]);
 
   return (
@@ -74,17 +111,22 @@ export default function AISummaryPanel({ caseId }: AISummaryPanelProps) {
           )}
         </div>
         <div className="flex items-center space-x-2">
+          {isCached && generatedAt && (
+            <span className="text-xs text-gray-400" title={`Generated: ${new Date(generatedAt).toLocaleString()}`}>
+              cached
+            </span>
+          )}
           {!hasOrder && summary && (
             <span className="text-xs text-orange-600">No order data</span>
           )}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              fetchSummary();
+              fetchSummary(true); // Force refresh
             }}
             disabled={loading}
             className="p-1 text-purple-500 hover:text-purple-700 hover:bg-purple-100 rounded transition disabled:opacity-50"
-            title="Refresh"
+            title="Regenerate Summary"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>

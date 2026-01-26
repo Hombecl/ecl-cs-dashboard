@@ -80,7 +80,8 @@ interface TrackInfoResponse {
       carrier: number;
       param?: any;
       tag?: string;
-      track: {
+      // Old API format (v2 legacy)
+      track?: {
         b: number; // carrier code
         c: number; // country code
         e: number; // status
@@ -104,31 +105,65 @@ interface TrackInfoResponse {
           z: string;
         }>;
       };
+      // New API format
       track_info?: {
         latest_status?: {
           status: string;
           sub_status: string;
+          sub_status_descr?: string | null;
+        };
+        latest_event?: {
+          time_iso: string;
+          time_utc: string;
+          description: string;
+          location?: string;
+        } | null;
+        time_metrics?: {
+          days_after_order?: number;
+          days_of_transit?: number;
+          days_of_transit_done?: number;
+          days_after_last_update?: number;
+          estimated_delivery_date?: {
+            source?: string | null;
+            from?: string | null;
+            to?: string | null;
+          };
+        };
+        shipping_info?: {
+          shipper_address?: {
+            country?: string;
+            state?: string | null;
+            city?: string | null;
+          };
+          recipient_address?: {
+            country?: string;
+            state?: string | null;
+            city?: string | null;
+          };
         };
         tracking?: {
           providers_hash: number;
           providers: Array<{
             provider: {
+              key: number;
               name: string;
-              key: string;
+              alias?: string;
+              tel?: string;
+              homepage?: string;
+              country?: string;
             };
+            latest_sync_status?: string;
+            latest_sync_time?: string;
+            events_hash?: number;
             events: Array<{
-              time_utc: string;
+              time_iso?: string;
+              time_utc?: string;
               time_raw?: string;
               description: string;
               location?: string;
               stage?: string;
             }>;
           }>;
-        };
-        time_metrics?: {
-          days_after_order?: number;
-          days_of_transit?: number;
-          days_of_transit_done?: number;
         };
         misc_info?: {
           risk_factor?: number;
@@ -161,6 +196,18 @@ function getStatusText(statusCode: number): string {
     default:
       return 'Unknown';
   }
+}
+
+function getStatusCodeFromText(status: string): number {
+  const statusLower = status.toLowerCase();
+  if (statusLower.includes('delivered')) return TRACKING_STATUS.DELIVERED;
+  if (statusLower.includes('transit') || statusLower.includes('shipping')) return TRACKING_STATUS.IN_TRANSIT;
+  if (statusLower.includes('pickup')) return TRACKING_STATUS.PICKUP;
+  if (statusLower.includes('expired')) return TRACKING_STATUS.EXPIRED;
+  if (statusLower.includes('undelivered') || statusLower.includes('failed')) return TRACKING_STATUS.UNDELIVERED;
+  if (statusLower.includes('alert') || statusLower.includes('exception')) return TRACKING_STATUS.ALERT;
+  if (statusLower.includes('notfound') || statusLower === 'not found') return TRACKING_STATUS.NOT_FOUND;
+  return TRACKING_STATUS.NOT_FOUND;
 }
 
 /**
@@ -259,22 +306,33 @@ export async function getTrackingInfo(
     const trackInfo = item.track_info;
     const track = item.track;
 
-    // Combine events from all sources (z0, z1, z2)
+    // Collect events from all available sources
     const events: TrackingEvent[] = [];
 
-    // Try to use track_info events first (more detailed)
+    // Try to use track_info events first (new API format)
     if (trackInfo?.tracking?.providers) {
       for (const provider of trackInfo.tracking.providers) {
         for (const event of provider.events || []) {
           events.push({
-            timestamp: event.time_utc || event.time_raw || '',
+            timestamp: event.time_utc || event.time_iso || event.time_raw || '',
             description: event.description,
             location: event.location,
           });
         }
       }
-    } else {
-      // Fallback to raw track data
+    }
+
+    // Also check latest_event if no events from providers
+    if (events.length === 0 && trackInfo?.latest_event) {
+      events.push({
+        timestamp: trackInfo.latest_event.time_utc || trackInfo.latest_event.time_iso || '',
+        description: trackInfo.latest_event.description,
+        location: trackInfo.latest_event.location,
+      });
+    }
+
+    // Fallback to legacy track data if available
+    if (events.length === 0 && track) {
       const allEvents = [...(track.z0 || []), ...(track.z1 || []), ...(track.z2 || [])];
       for (const event of allEvents) {
         events.push({
@@ -286,18 +344,44 @@ export async function getTrackingInfo(
     }
 
     // Sort events by timestamp (newest first)
-    events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    events.sort((a, b) => {
+      const dateA = new Date(a.timestamp).getTime();
+      const dateB = new Date(b.timestamp).getTime();
+      if (isNaN(dateA) || isNaN(dateB)) return 0;
+      return dateB - dateA;
+    });
+
+    // Get carrier info from either new or old format
+    const carrierName = trackInfo?.tracking?.providers?.[0]?.provider?.name ||
+                       trackInfo?.tracking?.providers?.[0]?.provider?.alias ||
+                       (track?.b ? `Carrier ${track.b}` : `Carrier ${item.carrier}`);
+    const carrierCode = track?.b || item.carrier || 0;
+
+    // Get status from either new or old format
+    const status = trackInfo?.latest_status?.status ||
+                  (track?.e !== undefined ? getStatusText(track.e) : 'Unknown');
+    const statusCode = track?.e || getStatusCodeFromText(trackInfo?.latest_status?.status || 'Unknown');
+
+    // Get estimated delivery
+    const estimatedDelivery = track?.d ||
+                             trackInfo?.time_metrics?.estimated_delivery_date?.from ||
+                             trackInfo?.time_metrics?.estimated_delivery_date?.to ||
+                             undefined;
+
+    // Get origin/destination
+    const origin = track?.w1 || trackInfo?.shipping_info?.shipper_address?.country;
+    const destination = track?.w2 || trackInfo?.shipping_info?.recipient_address?.country;
 
     results.push({
       trackingNumber: item.number,
-      carrier: trackInfo?.tracking?.providers?.[0]?.provider?.name || `Carrier ${track.b}`,
-      carrierCode: track.b,
-      status: trackInfo?.latest_status?.status || getStatusText(track.e),
-      statusCode: track.e,
-      estimatedDelivery: track.d,
-      lastUpdate: events[0]?.timestamp,
-      origin: track.w1,
-      destination: track.w2,
+      carrier: carrierName,
+      carrierCode,
+      status,
+      statusCode,
+      estimatedDelivery,
+      lastUpdate: events[0]?.timestamp || trackInfo?.tracking?.providers?.[0]?.latest_sync_time,
+      origin,
+      destination,
       events,
       daysInTransit: trackInfo?.time_metrics?.days_of_transit,
     });
@@ -315,28 +399,22 @@ export async function getTrackingInfo(
 }
 
 /**
- * Convenience function to register and get tracking info in one call
- * Handles the case where tracking number hasn't been registered yet
+ * Get tracking info for a package
+ * Assumes tracking numbers are already registered via n8n workflow
  */
 export async function trackPackage(
   trackingNumber: string,
   apiKey: string
 ): Promise<TrackingInfo | null> {
-  // First try to get tracking info
   const { results, errors } = await getTrackingInfo([trackingNumber], apiKey);
 
   if (results.length > 0) {
     return results[0];
   }
 
-  // If not found, try to register first
-  if (errors.some((e) => e.error.includes('not registered') || e.error.includes('Not found'))) {
-    await registerTrackingNumbers([trackingNumber], apiKey);
-    // Wait a bit for registration to process
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    // Try again
-    const retry = await getTrackingInfo([trackingNumber], apiKey);
-    return retry.results[0] || null;
+  // Log error for debugging
+  if (errors.length > 0) {
+    console.error('17Track error for', trackingNumber, ':', errors[0].error);
   }
 
   return null;

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   getCaseById,
   getOrderByPlatformNumber,
+  updateCase,
 } from '@/lib/airtable';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { isValidRecordId } from '@/lib/sanitize';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
@@ -22,6 +24,17 @@ export async function GET(
   try {
     const { id } = await params;
 
+    // Validate record ID format
+    if (!isValidRecordId(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+
+    // Check if force refresh is requested
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === 'true';
+
     // Get case data
     const caseData = await getCaseById(id);
     if (!caseData) {
@@ -35,6 +48,23 @@ export async function GET(
     const order = caseData.platformOrderNumber
       ? await getOrderByPlatformNumber(caseData.platformOrderNumber)
       : null;
+
+    // Check if we have cached AI Summary and not forcing refresh
+    if (!forceRefresh && caseData.aiSummary) {
+      try {
+        const cachedSummary: AISummary = JSON.parse(caseData.aiSummary);
+        return NextResponse.json({
+          success: true,
+          data: cachedSummary,
+          hasOrder: !!order,
+          cached: true,
+          generatedAt: caseData.aiSummaryGeneratedAt,
+        });
+      } catch {
+        // Invalid JSON in cache, regenerate
+        console.log('Invalid cached summary, regenerating...');
+      }
+    }
 
     // Check if API key is configured
     if (!process.env.GOOGLE_AI_API_KEY) {
@@ -101,10 +131,24 @@ Respond with valid JSON only, no markdown.`;
 
     const aiSummary: AISummary = JSON.parse(cleanedText);
 
+    // Save AI Summary to Airtable for caching
+    const now = new Date().toISOString();
+    try {
+      await updateCase(id, {
+        aiSummary: JSON.stringify(aiSummary),
+        aiSummaryGeneratedAt: now,
+      });
+    } catch (saveError) {
+      // Log but don't fail the request if save fails
+      console.error('Failed to save AI summary to Airtable:', saveError);
+    }
+
     return NextResponse.json({
       success: true,
       data: aiSummary,
       hasOrder: !!order,
+      cached: false,
+      generatedAt: now,
     });
   } catch (error) {
     console.error('Failed to generate AI summary:', error);

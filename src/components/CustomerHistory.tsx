@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { CSCase } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -18,19 +18,23 @@ export default function CustomerHistory({ customerEmail, currentCaseId }: Custom
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (customerEmail) {
-      fetchCustomerHistory();
+  const fetchCustomerHistory = useCallback(async () => {
+    if (!customerEmail) return;
+
+    // Cancel any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
-  }, [customerEmail, currentCaseId]);
+    abortControllerRef.current = new AbortController();
 
-  const fetchCustomerHistory = async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(
-        `/api/customer-history?email=${encodeURIComponent(customerEmail)}&excludeCaseId=${currentCaseId}`
+        `/api/customer-history?email=${encodeURIComponent(customerEmail)}&excludeCaseId=${currentCaseId}`,
+        { signal: abortControllerRef.current.signal }
       );
       const result = await response.json();
 
@@ -39,12 +43,29 @@ export default function CustomerHistory({ customerEmail, currentCaseId }: Custom
       } else {
         setError(result.error || 'Failed to load');
       }
-    } catch {
+    } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       setError('Failed to fetch customer history');
     } finally {
       setLoading(false);
     }
-  };
+  }, [customerEmail, currentCaseId]);
+
+  useEffect(() => {
+    if (customerEmail) {
+      fetchCustomerHistory();
+    }
+
+    // Cleanup: abort on unmount or dependency change
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [customerEmail, currentCaseId, fetchCustomerHistory]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {

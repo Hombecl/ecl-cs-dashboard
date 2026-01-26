@@ -72,17 +72,24 @@ ${store.personaBackground ? `Background: ${store.personaBackground}` : ''}
   }
 
   // Build context
+  // IMPORTANT: Use Marketplace Tracking Number (what customer sees), NOT the actual tracking number
   let orderContext = '';
   if (order) {
+    // Prefer marketplace tracking number (what customer sees in their Walmart order)
+    const customerTrackingNumber = order.marketplaceTrackingNumber || order.trackingNumber || 'Not yet shipped';
+    const hasTracking = order.marketplaceTrackingNumber || order.trackingNumber;
+
     orderContext = `
 ORDER DETAILS:
 - Item: ${order.itemName}
 - Amount: $${order.salesAmount.toFixed(2)}
 - Order Date: ${order.orderDate}
 - Status: ${order.status}
-- Tracking: ${order.trackingNumber || 'Not yet shipped'}
+- Tracking Number (for customer): ${customerTrackingNumber}
 - Tracking Status: ${order.trackingStatus || 'N/A'}
+- Actual Delivery Date: ${order.actualDelivery || 'Not yet delivered'}
 - Expected Delivery: ${order.expectedDelivery || 'N/A'}
+${hasTracking ? `\nIMPORTANT: When providing tracking info to customer, use this tracking number: ${customerTrackingNumber}` : ''}
 `;
   }
 
@@ -123,6 +130,7 @@ GUIDELINES:
 6. Keep it concise but complete
 7. If tracking shows delivered but customer says not received, ask politely if someone else may have received it
 8. For wrong item issues, if order value < $15, offer replacement without requiring return
+9. IMPORTANT: When mentioning tracking number to the customer, ONLY use the "Tracking Number (for customer)" provided above - this is what the customer sees in their Walmart order
 
 Write the reply now (just the message, no additional commentary):`;
 
